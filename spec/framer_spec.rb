@@ -9,7 +9,7 @@ describe HTTP2::Framer do
       {
         length: 4,
         type: :headers,
-        flags: [:end_stream, :reserved, :end_headers],
+        flags: [:end_stream, :end_segment, :end_headers],
         stream: 15,
       }
     }
@@ -58,7 +58,7 @@ describe HTTP2::Framer do
       frame = {
         length: 4,
         type: :data,
-        flags: [:end_stream, :reserved],
+        flags: [:end_stream, :end_segment],
         stream: 1,
         payload: 'text'
       }
@@ -75,7 +75,7 @@ describe HTTP2::Framer do
       frame = {
         length: 12,
         type: :headers,
-        flags: [:end_stream, :reserved, :end_headers],
+        flags: [:end_stream, :end_segment, :end_headers],
         stream: 1,
         payload: 'header-block'
       }
@@ -91,12 +91,14 @@ describe HTTP2::Framer do
         type: :headers,
         flags: [:end_headers, :priority],
         stream: 1,
-        priority: 15,
+        stream_dependency: 15,
+        weight: 12,
+        exclusive: false,
         payload: 'header-block'
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0x10,0x1,0xc,0x1,0xf,*'header-block'.bytes].pack("nCCNNC*")
+      bytes.should eq [0x11,0x1,0x24,0x1,0xf,0xb,*'header-block'.bytes].pack("nCCNNCC*")
       f.parse(bytes).should eq frame
     end
   end
@@ -104,14 +106,16 @@ describe HTTP2::Framer do
   context "PRIORITY" do
     it "should generate and parse bytes" do
       frame = {
-        length: 4,
+        length: 5,
         type: :priority,
         stream: 1,
-        priority: 15
+        stream_dependency: 15,
+        weight: 12,
+        exclusive: true,
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0x4,0x2,0x0,0x1,0xf].pack("nCCNN")
+      bytes.should eq [0x5,0x2,0x0,0x1,0x8000000f,0xb].pack("nCCNNC")
       f.parse(bytes).should eq frame
     end
   end
@@ -134,29 +138,30 @@ describe HTTP2::Framer do
   context "SETTINGS" do
     let(:frame) {
       {
-        length: 8,
+        length: 5,
         type: :settings,
         flags: [],
         stream: 0,
-        payload: {
-          settings_max_concurrent_streams: 10
-        }
+        payload: [
+          [:settings_max_concurrent_streams, 10],
+          [:settings_header_table_size,      2048],
+        ]
       }
     }
 
     it "should generate and parse bytes" do
 
       bytes = f.generate(frame)
-      bytes.should eq [0x8,0x4,0x0,0x0,0x4,0xa].pack("nCCNNN")
+      bytes.should eq [10,0x4,0x0,0x0,3,10,1,2048].pack("nCCNCNCN")
       f.parse(bytes).should eq frame
     end
 
     it "should ignore custom settings" do
-      frame[:length] = 8*2
-      frame[:payload] = {
-        settings_max_concurrent_streams: 10,
-        settings_initial_window_size:    20
-      }
+      frame[:length] = 5*2
+      frame[:payload] = [
+        [:settings_max_concurrent_streams, 10],
+        [:settings_initial_window_size,    20],
+      ]
 
       buf = f.generate(frame.merge({55 => 30}))
       f.parse(buf).should eq frame
@@ -171,25 +176,26 @@ describe HTTP2::Framer do
 
     it "should raise exception on invalid setting" do
       expect {
-        frame[:payload] = {random: 23}
+        frame[:payload] = [[:random, 23]]
         f.generate(frame)
       }.to raise_error(CompressionError, /Unknown settings ID/)
     end
   end
 
   context "PUSH_PROMISE" do
+    "not implemented yet"
     it "should generate and parse bytes" do
       frame = {
         length: 11,
         type: :push_promise,
-        flags: [:end_push_promise],
+        flags: [:end_headers],
         stream: 1,
         promise_stream: 2,
         payload: 'headers'
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0xb,0x5,0x1,0x1,0x2,*'headers'.bytes].pack("nCCNNC*")
+      bytes.should eq [0xb,0x5,0x4,0x1,0x2,*'headers'.bytes].pack("nCCNNC*")
       f.parse(bytes).should eq frame
     end
   end
@@ -200,7 +206,7 @@ describe HTTP2::Framer do
         length: 8,
         stream: 1,
         type: :ping,
-        flags: [:pong],
+        flags: [:ack],
         payload: '12345678'
       }
     }
@@ -256,7 +262,7 @@ describe HTTP2::Framer do
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0x4,0x9,0x0,0x0,0xa].pack("nCCNN")
+      bytes.should eq [0x4,0x8,0x0,0x0,0xa].pack("nCCNN")
       f.parse(bytes).should eq frame
     end
   end
@@ -267,13 +273,102 @@ describe HTTP2::Framer do
         length: 12,
         type: :continuation,
         stream: 1,
-        flags: [:end_stream, :end_headers],
+        flags: [:end_headers],
         payload: 'header-block'
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0xc,0xa,0x3,0x1,*'header-block'.bytes].pack("nCCNC*")
+      bytes.should eq [0xc,0x9,0x4,0x1,*'header-block'.bytes].pack("nCCNC*")
       f.parse(bytes).should eq frame
+    end
+  end
+
+  context "ALTSVC" do
+    it "should generate and parse bytes" do
+      frame = {
+        length: 44,
+        type: :altsvc,
+        stream: 1,
+        max_age: 1402290402,	   # 4
+        port: 8080,		   # 2    reserved 1
+        proto: 'h2-12',		   # 1 + 5
+        host: 'www.example.com',   # 1 + 15
+        origin: 'www.example.com', # 15
+      }
+      bytes = f.generate(frame)
+      expected = [44, 0xa, 0, 1, 1402290402, 8080, 0].pack("nCCNNnC")
+      expected << [5, *'h2-12'.bytes].pack("CC*")
+      expected << [15, *'www.example.com'.bytes].pack("CC*")
+      expected << [*'www.example.com'.bytes].pack("C*")
+      bytes.should eq expected
+      f.parse(bytes).should eq frame
+    end
+  end
+
+  context "BLOCKED" do
+    it "should generate and parse bytes" do
+      frame = {
+        length: 0,
+        type: :blocked,
+        stream: 1,
+      }
+      bytes = f.generate(frame)
+      bytes.should eq [0, 0xb, 0, 1].pack("nCCN")
+      f.parse(bytes).should eq frame
+    end
+  end
+
+  context "Padding" do
+    [:data, :headers, :continuation, :push_promise].each do |type|
+      [1,256,257,1334].each do |padlen|
+        context "generating #{type} frame padded #{padlen}" do
+          before do
+            @frame = {
+              length: 12,
+              type: type,
+              stream: 1,
+              payload: 'example data',
+            }
+            type == :push_promise and @frame[:promise_stream] = 2
+            @normal = f.generate(@frame)
+            @padded = f.generate(@frame.merge(:padding => padlen))
+          end
+          it "should generate a frame with padding" do
+            @padded.bytesize.should eq @normal.bytesize + padlen
+          end
+          it "should fill padded octets with zero" do
+            trailer_len = padlen - (padlen > 256 ? 2 : 1)
+            @padded[-trailer_len, trailer_len].should match(/\A\0*\z/)
+          end
+          it "should parse a frame with padding" do
+            f.parse(Buffer.new(@padded)).should eq \
+            f.parse(Buffer.new(@normal)).merge(:padding => padlen)
+          end
+          it "should preserve payload" do
+            f.parse(Buffer.new(@padded))[:payload].should eq @frame[:payload]
+          end
+        end
+      end
+    end
+    context "with invalid paddings" do
+      before do
+        @frame = {
+          length: 12,
+          type: :data,
+          stream: 1,
+          payload: 'example data',
+        }
+        @padlen = 341
+        @padded = f.generate(@frame.merge(:padding => @padlen))
+      end
+      it "should raise exception when the given padding is longer than the payload" do
+        @padded.setbyte(8,2)
+        expect { f.parse(Buffer.new(@padded)) }.to raise_error(CompressionError, /padding/)
+      end
+      it "should raise exception when PAD_HIGH is given but not PAD_LOW" do
+        @padded.setbyte(3,0x10)
+        expect { f.parse(Buffer.new(@padded)) }.to raise_error(CompressionError, /PAD_HIGH/)
+      end
     end
   end
 
@@ -281,9 +376,9 @@ describe HTTP2::Framer do
     frames = [
       [{type: :data, stream: 1, flags: [:end_stream], payload: "abc"}, 3],
       [{type: :headers, stream: 1, payload: "abc"}, 3],
-      [{type: :priority, stream: 3, priority: 30}, 4],
+      [{type: :priority, stream: 3, stream_dependency: 30, exclusive: false, weight: 1}, 5],
       [{type: :rst_stream, stream: 3, error: 100}, 4],
-      [{type: :settings, payload: {settings_max_concurrent_streams: 10}}, 8],
+      [{type: :settings, payload: [[:settings_max_concurrent_streams, 10]]}, 5],
       [{type: :push_promise, promise_stream: 5, payload: "abc"}, 7],
       [{type: :ping, payload: "blob"*2}, 8],
       [{type: :goaway, last_stream: 5, error: 20, payload: "blob"}, 12],

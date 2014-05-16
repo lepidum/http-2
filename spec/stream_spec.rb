@@ -54,7 +54,7 @@ describe HTTP2::Stream do
         @stream.state.should eq :closed
       end
 
-      it "should reprioritize stream on PRIORITY" do
+      xit "should reprioritize stream on PRIORITY" do
         @stream.receive PRIORITY.merge({priority: 30})
         @stream.priority.should eq 30
       end
@@ -94,7 +94,7 @@ describe HTTP2::Stream do
         @stream.state.should eq :closed
       end
 
-      it "should reprioritize stream on PRIORITY" do
+      xit "should reprioritize stream on PRIORITY" do
         @stream.send PRIORITY
         @stream.priority.should eq 15
       end
@@ -116,7 +116,7 @@ describe HTTP2::Stream do
       end
 
       it "should transition to half closed (local) if sending END_STREAM" do
-        [DATA, HEADERS, CONTINUATION].each do |frame|
+        [DATA, HEADERS].each do |frame|
           s, f = @stream.dup, frame.dup
           f[:flags] = [:end_stream]
 
@@ -126,7 +126,7 @@ describe HTTP2::Stream do
       end
 
       it "should transition to half closed (remote) if receiving END_STREAM" do
-        [DATA, HEADERS, CONTINUATION].each do |frame|
+        [DATA, HEADERS].each do |frame|
           s, f = @stream.dup, frame.dup
           f[:flags] = [:end_stream]
 
@@ -302,7 +302,7 @@ describe HTTP2::Stream do
       end
 
       it "should transition to closed if END_STREAM flag is sent" do
-        [DATA, HEADERS, CONTINUATION].each do |frame|
+        [DATA, HEADERS].each do |frame|
           s, f = @stream.dup, frame.dup
           f[:flags] = [:end_stream]
 
@@ -455,7 +455,7 @@ describe HTTP2::Stream do
 
     it "should observe session flow control" do
       settings, data = SETTINGS.dup, DATA.dup
-      settings[:payload] = { settings_initial_window_size: 1000 }
+      settings[:payload] = [[:settings_initial_window_size, 1000]]
       settings[:stream] = 0
 
       framer = Framer.new
@@ -479,7 +479,7 @@ describe HTTP2::Stream do
   end
 
   context "client API" do
-    it ".reprioritize should emit PRIORITY frame" do
+    xit ".reprioritize should emit PRIORITY frame" do
       @stream.should_receive(:send) do |frame|
         frame[:type].should eq :priority
         frame[:priority].should eq 30
@@ -585,7 +585,7 @@ describe HTTP2::Stream do
       @client_stream.data(payload)
     end
 
-    it "should emit received priority via on(:priority)" do
+    xit "should emit received priority via on(:priority)" do
       new_priority, recv = 15, 0
       @srv.on(:stream) do |stream|
         stream.on(:priority) do |pri|
@@ -604,7 +604,6 @@ describe HTTP2::Stream do
           @server_stream = stream
         end
 
-        # @srv << @frm.generate(SETTINGS)
         @client_stream.headers({"key" => "value"})
       end
 
