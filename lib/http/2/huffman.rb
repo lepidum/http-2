@@ -61,13 +61,14 @@ module HTTP2
         bits_in_buffer = 0
 
         while index < str.size
-          length, octets = @@encode_table[str[index].ord][bits_in_buffer]
+          bits_in_buffer, head, body, tail = @@encode_table[str[index].ord][bits_in_buffer]
           index += 1
-          octets = octets.dup
-          octets[0] |= buffer
-          emit << octets[0,(length / 8)].pack("C*")
-          bits_in_buffer = length % 8
-          buffer = bits_in_buffer == 0 ? 0 : octets.last
+          buffer |= head
+          if tail
+            # emit results
+            emit << buffer.chr('binary') << body
+            buffer = tail
+          end
         end
         if bits_in_buffer > 0
           emit << ( buffer | ((1 << (8 - bits_in_buffer)) - 1) ).chr('binary')
@@ -83,7 +84,12 @@ module HTTP2
       def build_encode_table
         CODES.map do |code, length|
           (0..7).map do |shift|
-            [length + shift, shift(code, length, shift)]
+            octets = shift(code, length, shift)
+            emit      = (length + shift) / 8
+            remainder = (length + shift) % 8
+            body = emit > 0 ? octets[1...emit].pack("C*") : ''
+            tail = emit > 0 ? (remainder == 0 ? 0 : octets.last) : nil
+            [remainder, octets[0], body, tail]
           end
         end
       end
