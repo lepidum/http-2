@@ -108,11 +108,11 @@ module HTTP2
 HEADER
         id.times do |i|
           n = id_state[i]
-          val = [n.final, []]
+          f.print "        [#{n.final},["
           (1 << BITS_AT_ONCE).times do |t|
-            val[1] << [n.transitions[t].emit, state_id[n.transitions[t].node]]
+            f.print %Q/[#{n.transitions[t].emit.dup.force_encoding('binary').inspect},#{state_id[n.transitions[t].node]}],/
           end
-          f.print "        #{val.inspect},\n"
+          f.print "]],\n"
         end
         f.print <<TAILER
       ]
