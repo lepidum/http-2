@@ -12,7 +12,7 @@ require 'benchmark'
 
 h = HTTP2::Header::Huffman.new
 
-n = 10000
+n = 100000
 Benchmark.bm(7) do |x|
   x.report("naive:") { n.times{data.each{|d| h.encode(d)}} }
   x.report("table:") { n.times{data.each{|d| h.encode2(d)}} }

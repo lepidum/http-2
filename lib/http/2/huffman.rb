@@ -32,10 +32,10 @@ module HTTP2
           buffer = (buffer << length) | code
           bits_in_buffer += length
           while bits_in_buffer > 8
-            masked = (buffer & (255 << (bits_in_buffer - 8)))
-            emit << (masked >> (bits_in_buffer - 8)).chr('binary')
-            buffer ^= masked
             bits_in_buffer -= 8
+            masked = (buffer & (255 << bits_in_buffer))
+            emit << (masked >> bits_in_buffer).chr('binary')
+            buffer ^= masked
           end
         end
         if bits_in_buffer > 0
