@@ -60,11 +60,10 @@ module HTTP2
         buffer = 0
         bits_in_buffer = 0
 
-        require 'pry'
-
         while index < str.size
           length, octets = @@encode_table[str[index].ord][bits_in_buffer]
           index += 1
+          octets = octets.dup
           octets[0] |= buffer
           emit << octets[0,(length / 8)].pack("C*")
           bits_in_buffer = length % 8
