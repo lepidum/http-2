@@ -9,7 +9,7 @@ group :test do
   gem 'autotest-standalone'
   gem 'autotest-growl'
   gem 'pry'
-  gem 'pry-debugger'
+  gem 'pry-byebug'
 end
 
 gemspec
