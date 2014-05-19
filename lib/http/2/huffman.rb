@@ -10,7 +10,6 @@ module HTTP2
       # include Error
 
       def initialize
-        @@encode_table ||= build_encode_table
         # @@decode_table ||= build_decode_table
       end
 
@@ -46,65 +45,6 @@ module HTTP2
         end
 
         emit
-      end
-
-      # Encodes provided value via huffman encoding.
-      # Length is not encoded in this method.
-      #
-      # @param str [String]
-      # @return [String] binary string
-      def encode2(str)
-        str = str.dup.force_encoding('binary')
-        index = 0
-        emit = ''
-        buffer = 0
-        bits_in_buffer = 0
-
-        while index < str.size
-          bits_in_buffer, head, body, tail = @@encode_table[str[index].ord][bits_in_buffer]
-          index += 1
-          buffer |= head
-          if tail
-            # emit results
-            emit << buffer.chr('binary') << body
-            buffer = tail
-          end
-        end
-        if bits_in_buffer > 0
-          emit << ( buffer | ((1 << (8 - bits_in_buffer)) - 1) ).chr('binary')
-        end
-
-        emit
-      end
-
-      # Build a table of pre-shifted Huffman codes.
-      # For a character +c+ with a shift count +s+,
-      #  table[c.ord][s] => [total_bits, [ octet, ... ]]
-      # The octet sequence represents Huffman code of +c+ shifted rightward +s+ bits.
-      def build_encode_table
-        CODES.map do |code, length|
-          (0..7).map do |shift|
-            octets = shift(code, length, shift)
-            emit      = (length + shift) / 8
-            remainder = (length + shift) % 8
-            body = emit > 0 ? octets[1...emit].pack("C*") : ''
-            tail = emit > 0 ? (remainder == 0 ? 0 : octets.last) : nil
-            [remainder, octets[0], body, tail]
-          end
-        end
-      end
-
-      def shift(code, length, s)
-        result = []
-        length += s
-        while length > 8
-          result << ( (code & (255 << (length - 8))) >> (length - 8) )
-          length -= 8
-        end
-        if length > 0
-          result << ( (code & ((1 << length) - 1)) << (8 - length) )
-        end
-        result
       end
 
       # Huffman table as specified in
