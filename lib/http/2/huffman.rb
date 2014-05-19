@@ -1,3 +1,5 @@
+require File.expand_path("error", File.dirname(__FILE__))
+
 module HTTP2
 
   # Implementation of huffman encoding for HPACK
@@ -7,11 +9,10 @@ module HTTP2
 
     # Huffman encoder/decoder
     class Huffman
-      # include Error
+      include Error
 
-      def initialize
-        # @@decode_table ||= build_decode_table
-      end
+      BINARY = "binary"
+      private_constant :BINARY
 
       # Encodes provided value via huffman encoding.
       # Length is not encoded in this method.
@@ -19,7 +20,7 @@ module HTTP2
       # @param str [String]
       # @return [String] binary string
       def encode(str)
-        str = str.dup.force_encoding('binary')
+        str = str.dup.force_encoding(BINARY)
         index = 0
         emit = ''
         buffer = 0
@@ -33,7 +34,7 @@ module HTTP2
           while bits_in_buffer > 8
             bits_in_buffer -= 8
             masked = (buffer & (255 << bits_in_buffer))
-            emit << (masked >> bits_in_buffer).chr('binary')
+            emit << (masked >> bits_in_buffer).chr(BINARY)
             buffer ^= masked
           end
         end
@@ -41,10 +42,38 @@ module HTTP2
           emit << (
             (buffer << (8 - bits_in_buffer)) |
             ((1 << (8 - bits_in_buffer)) - 1)
-            ).chr('binary')
+            ).chr(BINARY)
         end
 
         emit
+      end
+
+      # Decodes provided Huffman coded string.
+      # Decoding stops when decoded +len+ characters or +buf+ exhausted.
+      #
+      # @param buf [Buffer]
+      # @param len [Integer]
+      # @return [String] binary string
+      def decode(buf, len)
+        emit = ''
+        state = 0 # start state
+        nibbles = []
+        while emit.bytesize < len
+          if nibbles.empty?
+            buf.empty? and raise CompressionError.new('Huffman decode error (too short)')
+            c = buf.getbyte
+            # Assume BITS_AT_ONCE == 4
+            nibbles = [ (c & 0xf0) >> 4, c & 0xf ]
+          end
+          nb = nibbles.shift
+          trans = MACHINE[state][1][nb]
+          emit << trans.first
+          state = trans.last
+        end
+        unless MACHINE[state][0] && nibbles.all?{|x| x == 0xf}
+          raise CompressionError.new('Huffman decode error (EOS invalid)')
+        end
+        emit.force_encoding(BINARY)
       end
 
       # Huffman table as specified in
