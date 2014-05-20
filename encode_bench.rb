@@ -7,7 +7,7 @@ data = [
   "BX=c99r6jp89a7no&b=3&s=q4; localization=en-us%3Bus%3Bus",
   ]
 
-require './lib/http/2/huffman.rb'
+require_relative './lib/http/2/huffman.rb'
 require 'benchmark'
 
 h = HTTP2::Header::Huffman.new

@@ -3,7 +3,7 @@ task :generate_table do
   HuffmanTable::Node.generate_state_table
 end
 
-require File.expand_path("../http/2/huffman", File.dirname(__FILE__))
+require_relative '../http/2/huffman'
 
 module HuffmanTable
   BITS_AT_ONCE = 4

@@ -1,4 +1,4 @@
-require File.expand_path("error", File.dirname(__FILE__))
+require_relative 'error'
 
 module HTTP2
 
