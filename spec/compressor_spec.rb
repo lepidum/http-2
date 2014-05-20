@@ -65,6 +65,12 @@ describe HTTP2::Header do
       (wire.readbyte(0) & 0x7f).should eq h[:name] + 1
       d.header(wire).should eq h
     end
+    it "should raise when decoding indexed representation with index zero" do
+      h = {name: 10, type: :indexed}
+      wire = c.header(h)
+      wire[0] = 0x80.chr('binary')
+      expect { d.header(wire) }.to raise_error CompressionError
+    end
 
     context "literal w/o indexing representation" do
       it "should handle indexed header" do
