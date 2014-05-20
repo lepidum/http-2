@@ -15,73 +15,71 @@ module HTTP2
 
       # TODO: replace StringIO with Buffer...
 
-      # Default request working set as defined by the spec.
-      REQ_DEFAULTS = [
-        [':scheme'            , 'http' ],
-        [':scheme'            , 'https'],
-        [':host'              , ''     ],
-        [':path'              , '/'    ],
-        [':method'            , 'get'  ],
-        ['accept'             , ''     ],
-        ['accept-charset'     , ''     ],
-        ['accept-encoding'    , ''     ],
-        ['accept-language'    , ''     ],
-        ['cookie'             , ''     ],
-        ['if-modified-since'  , ''     ],
-        ['user-agent'         , ''     ],
-        ['referer'            , ''     ],
-        ['authorization'      , ''     ],
-        ['allow'              , ''     ],
-        ['cache-control'      , ''     ],
-        ['connection'         , ''     ],
-        ['content-length'     , ''     ],
-        ['content-type'       , ''     ],
-        ['date'               , ''     ],
-        ['expect'             , ''     ],
-        ['from'               , ''     ],
-        ['if-match'           , ''     ],
-        ['if-none-match'      , ''     ],
-        ['if-range'           , ''     ],
-        ['if-unmodified-since', ''     ],
-        ['max-forwards'       , ''     ],
-        ['proxy-authorization', ''     ],
-        ['range'              , ''     ],
-        ['via'                , ''     ]
-      ]
-
-      # Default response working set as defined by the spec.
-      RESP_DEFAULTS = [
-        [':status'                     , '200'],
-        ['age'                         , ''   ],
-        ['cache-control'               , ''   ],
-        ['content-length'              , ''   ],
-        ['content-type'                , ''   ],
-        ['date'                        , ''   ],
-        ['etag'                        , ''   ],
-        ['expires'                     , ''   ],
-        ['last-modified'               , ''   ],
-        ['server'                      , ''   ],
-        ['set-cookie'                  , ''   ],
-        ['vary'                        , ''   ],
-        ['via'                         , ''   ],
-        ['access-control-allow-origin' , ''   ],
-        ['accept-ranges'               , ''   ],
-        ['allow'                       , ''   ],
-        ['connection'                  , ''   ],
-        ['content-disposition'         , ''   ],
-        ['content-encoding'            , ''   ],
-        ['content-language'            , ''   ],
-        ['content-location'            , ''   ],
-        ['content-range'               , ''   ],
-        ['link'                        , ''   ],
-        ['location'                    , ''   ],
-        ['proxy-authenticate'          , ''   ],
-        ['refresh'                     , ''   ],
-        ['retry-after'                 , ''   ],
-        ['strict-transport-security'   , ''   ],
-        ['transfer-encoding'           , ''   ],
-        ['www-authenticate'            , ''   ]
-      ]
+      # Static table
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#appendix-B
+      STATIC_TABLE = [
+        [':authority',                  ''            ],
+        [':method',                     'GET'         ],
+        [':method',                     'POST'        ],
+        [':path',                       '/'           ],
+        [':path',                       '/index.html' ],
+        [':scheme',                     'http'        ],
+        [':scheme',                     'https'       ],
+        [':status',                     '200'         ],
+        [':status',                     '204'         ],
+        [':status',                     '206'         ],
+        [':status',                     '304'         ],
+        [':status',                     '400'         ],
+        [':status',                     '404'         ],
+        [':status',                     '500'         ],
+        ['accept-charset',              ''            ],
+        ['accept-encoding',             ''            ],
+        ['accept-language',             ''            ],
+        ['accept-ranges',               ''            ],
+        ['accept',                      ''            ],
+        ['access-control-allow-origin', ''            ],
+        ['age',                         ''            ],
+        ['allow',                       ''            ],
+        ['authorization',               ''            ],
+        ['cache-control',               ''            ],
+        ['content-disposition',         ''            ],
+        ['content-encoding',            ''            ],
+        ['content-language',            ''            ],
+        ['content-length',              ''            ],
+        ['content-location',            ''            ],
+        ['content-range',               ''            ],
+        ['content-type',                ''            ],
+        ['cookie',                      ''            ],
+        ['date',                        ''            ],
+        ['etag',                        ''            ],
+        ['expect',                      ''            ],
+        ['expires',                     ''            ],
+        ['from',                        ''            ],
+        ['host',                        ''            ],
+        ['if-match',                    ''            ],
+        ['if-modified-since',           ''            ],
+        ['if-none-match',               ''            ],
+        ['if-range',                    ''            ],
+        ['if-unmodified-since',         ''            ],
+        ['last-modified',               ''            ],
+        ['link',                        ''            ],
+        ['location',                    ''            ],
+        ['max-forwards',                ''            ],
+        ['proxy-authenticate',          ''            ],
+        ['proxy-authorization',         ''            ],
+        ['range',                       ''            ],
+        ['referer',                     ''            ],
+        ['refresh',                     ''            ],
+        ['retry-after',                 ''            ],
+        ['server',                      ''            ],
+        ['set-cookie',                  ''            ],
+        ['strict-transport-security',   ''            ],
+        ['transfer-encoding',           ''            ],
+        ['user-agent',                  ''            ],
+        ['vary',                        ''            ],
+        ['via',                         ''            ],
+        ['www-authenticate',            ''            ],
+      ].freeze
 
       # Current table of header key-value pairs.
       attr_reader :table
@@ -107,9 +105,9 @@ module HTTP2
       end
 
       # Performs differential coding based on provided command type.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.1.3
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.2.1
       #
-      # @param cmd [Hash]
+      # @param cmd [Hash] { type:, name:, value:, index: }
       # @return [Hash] emitted header
       def process(cmd)
         emit = nil
@@ -259,7 +257,7 @@ module HTTP2
           # inserted at the beginning of the header table.
           if cmd[:type] == :substitution && cur == cmd[:index]
              cmd[:type] = :prepend
-           end
+          end
 
           cursize -= (e.join.bytesize + 32)
         end
@@ -280,9 +278,11 @@ module HTTP2
     # Header representation as defined by the spec.
     HEADREP = {
       indexed:      {prefix: 7, pattern: 0x80},
-      incremental:  {prefix: 5, pattern: 0x40},
+      incremental:  {prefix: 6, pattern: 0x40},
       noindex:      {prefix: 4, pattern: 0x00},
       neverindexed: {prefix: 4, pattern: 0x10},
+      emptyreference: {prefix: 0, pattern: 0x30},
+      changetablesize: {prefix: 4, pattern: 0x20},
     }
 
     # Responsible for encoding header key-value pairs using HPACK algorithm.
@@ -397,18 +397,35 @@ module HTTP2
         # encoding and transmission.
         headers.map! {|(hk,hv)| [hk.downcase, hv] }
 
-        # Generate remove commands for missing headers
-        @cc.refset.each do |idx, (wk,wv)|
-          if headers.find {|(hk,hv)| hk == wk && hv == wv }.nil?
-            commands.push @cc.removecmd idx
+        if @options[:no_reference_set]
+          # Debugging mode.  Do not use refset at all.
+          unless @cc.refset.empty?
+            commands.push(type: :changetablesize)
           end
-        end
+          headers.each do |(hk,hv)|
+            cmd = @cc.addcmd [hk, hv]
+            if cmd[:type] == :incremental
+              cmd[:type] = :noindex
+            end
+            commands.push cmd
+          end
+        else
+          # Reference set differenciating
 
-        # Generate add commands for new headers
-        headers.each do |(hk,hv)|
-          if @cc.refset.find {|i,(wk,wv)| hk == wk && hv == wv}.nil?
-            commands.push @cc.addcmd [hk, hv]
+          # Generate remove commands for missing headers
+          @cc.refset.each do |idx, (wk,wv)|
+            if headers.find {|(hk,hv)| hk == wk && hv == wv }.nil?
+              commands.push @cc.removecmd idx
+            end
           end
+
+          # Generate add commands for new headers
+          headers.each do |(hk,hv)|
+            if @cc.refset.find {|i,(wk,wv)| hk == wk && hv == wv}.nil?
+              commands.push @cc.addcmd [hk, hv]
+            end
+          end
+
         end
 
         commands.each do |cmd|
