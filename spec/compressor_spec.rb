@@ -33,28 +33,26 @@ describe HTTP2::Header do
     end
 
     context "string" do
-      it "should handle ascii codepoints" do
-        ascii = "abcdefghij"
-        str = c.string(ascii)
+      [ ['with huffman',    {}, 0x80 ],
+        ['without huffman', {:no_huffman => true}, 0] ].each do |desc, options, msb|
+        let (:trailer) { "trailer" }
 
-        buf = Buffer.new(str+"trailer")
-        d.string(buf).should eq ascii
-      end
+        [
+          ['ascii codepoints', 'abcdefghij'],
+          ['utf-8 codepoints', 'éáűőúöüó€'],
+          ['long utf-8 strings', 'éáűőúöüó€'*100],
+          ].each do |datatype, plain|
+          it "should handle #{datatype} #{desc}" do
+            @c = Compressor.new(:request, options)
 
-      it "should handle utf-8 codepoints" do
-        utf8 = "éáűőúöüó€"
-        str = c.string(utf8)
+            str = @c.string(plain)
+            (str.getbyte(0) & 0x80).should eq msb
 
-        buf = Buffer.new(str+"trailer")
-        d.string(buf).should eq utf8
-      end
-
-      it "should handle long utf-8 strings" do
-        utf8 = "éáűőúöüó€"*100
-        str = c.string(utf8)
-
-        buf = Buffer.new(str+"trailer")
-        d.string(buf).should eq utf8
+            buf = Buffer.new(str + trailer)
+            d.string(buf).should eq plain
+            buf.should eq trailer
+          end
+        end
       end
     end
   end
@@ -62,47 +60,69 @@ describe HTTP2::Header do
   context "header representation" do
     it "should handle indexed representation" do
       h = {name: 10, type: :indexed}
-      d.header(c.header(h)).should eq h
+      wire = c.header(h)
+      (wire.readbyte(0) & 0x80).should eq 0x80
+      (wire.readbyte(0) & 0x7f).should eq h[:name] + 1
+      d.header(wire).should eq h
     end
 
     context "literal w/o indexing representation" do
       it "should handle indexed header" do
         h = {name: 10, value: "my-value", type: :noindex}
-        d.header(c.header(h)).should eq h
+        wire = c.header(h)
+        (wire.readbyte(0) & 0xf0).should eq 0x0
+        (wire.readbyte(0) & 0x0f).should eq h[:name] + 1
+        d.header(wire).should eq h
       end
 
       it "should handle literal header" do
         h = {name: "x-custom", value: "my-value", type: :noindex}
-        d.header(c.header(h)).should eq h
+        wire = c.header(h)
+        (wire.readbyte(0) & 0xf0).should eq 0x0
+        (wire.readbyte(0) & 0x0f).should eq 0
+        d.header(wire).should eq h
       end
     end
 
     context "literal w/ incremental indexing" do
       it "should handle indexed header" do
         h = {name: 10, value: "my-value", type: :incremental}
-        d.header(c.header(h)).should eq h
+        wire = c.header(h)
+        (wire.readbyte(0) & 0xc0).should eq 0x40
+        (wire.readbyte(0) & 0x3f).should eq h[:name] + 1
+        d.header(wire).should eq h
       end
 
       it "should handle literal header" do
         h = {name: "x-custom", value: "my-value", type: :incremental}
-        d.header(c.header(h)).should eq h
+        wire = c.header(h)
+        (wire.readbyte(0) & 0xc0).should eq 0x40
+        (wire.readbyte(0) & 0x3f).should eq 0
+        d.header(wire).should eq h
       end
     end
 
-    context "literal w/ substitution indexing" do
+    context "literal never indexed" do
       it "should handle indexed header" do
-        h = {name: 1, value: "my-value", index: 10, type: :substitution}
-        d.header(c.header(h)).should eq h
+        h = {name: 10, value: "my-value", type: :neverindexed}
+        wire = c.header(h)
+        (wire.readbyte(0) & 0xf0).should eq 0x10
+        (wire.readbyte(0) & 0x0f).should eq h[:name] + 1
+        d.header(wire).should eq h
       end
 
       it "should handle literal header" do
-        h = {name: "x-new", value: "my-value", index: 10, type: :substitution}
-        d.header(c.header(h)).should eq h
+        h = {name: "x-custom", value: "my-value", type: :neverindexed}
+        wire = c.header(h)
+        (wire.readbyte(0) & 0xf0).should eq 0x10
+        (wire.readbyte(0) & 0x0f).should eq 0
+        d.header(wire).should eq h
       end
     end
   end
 
   context "differential coding" do
+    before { pending "Not yet implemented" }
     context "shared compression context" do
       before(:each) { @cc = EncodingContext.new(:request) }
 
@@ -286,6 +306,7 @@ describe HTTP2::Header do
   end
 
   context "encode and decode" do
+    before { pending "Not yet implemented" }
     # http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-01#appendix-B
 
     before (:all) do

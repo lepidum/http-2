@@ -3,7 +3,7 @@ module HTTP2
   # Implementation of header compression for HTTP 2.0 (HPACK) format adapted
   # to efficiently represent HTTP headers in the context of HTTP 2.0.
   #
-  # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression
+  # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07
   module Header
 
     # The set of components used to encode or decode a header set form an
@@ -94,15 +94,20 @@ module HTTP2
       #
       # @param type [Symbol] either :request or :response
       # @param limit [Integer] maximum header table size in bytes
-      def initialize(type, limit = 4096)
+      # @param options [Hash] encoding options
+      #   :no_huffman       => true    Do not use Huffman encodings
+      #   :no_index         => true    Do not use incremental indexing
+      #   :no_reference_set => true    Do not use reference set differencing
+      def initialize(type, limit = 4096, options = {})
         @type = type
-        @table = (type == :request) ? REQ_DEFAULTS.dup : RESP_DEFAULTS.dup
+        @table = []
         @limit = limit
         @refset = []
+        @options = options
       end
 
       # Performs differential coding based on provided command type.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-03#section-3.2
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.1.3
       #
       # @param cmd [Hash]
       # @return [Hash] emitted header
@@ -275,9 +280,9 @@ module HTTP2
     # Header representation as defined by the spec.
     HEADREP = {
       indexed:      {prefix: 7, pattern: 0x80},
-      noindex:      {prefix: 5, pattern: 0x60},
       incremental:  {prefix: 5, pattern: 0x40},
-      substitution: {prefix: 6, pattern: 0x00}
+      noindex:      {prefix: 4, pattern: 0x00},
+      neverindexed: {prefix: 4, pattern: 0x10},
     }
 
     # Responsible for encoding header key-value pairs using HPACK algorithm.
@@ -287,13 +292,15 @@ module HTTP2
     # @example
     #   client_role = Compressor.new(:request)
     #   server_role = Compressor.new(:response)
+    # @param type [Symbol] either :request or :response
     class Compressor
-      def initialize(type)
-        @cc = EncodingContext.new(type)
+      def initialize(type, options = {})
+        @cc = EncodingContext.new(type, options)
+        @options = options
       end
 
       # Encodes provided value via integer representation.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-03#section-4.1.1
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-4.1.1
       #
       #  If I < 2^N - 1, encode I on N bits
       #  Else
@@ -325,22 +332,32 @@ module HTTP2
       end
 
       # Encodes provided value via string literal representation.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-03#section-4.1.3
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-4.1.2
       #
       # * The string length, defined as the number of bytes needed to store
-      #   its UTF-8 representation, is represented as an integer with a zero
-      #   bits prefix. If the string length is strictly less than 128, it is
+      #   its UTF-8 representation, is represented as an integer with a seven
+      #   bits prefix. If the string length is strictly less than 127, it is
       #   represented as one byte.
-      # * The string value represented as a list of UTF-8 character
+      # * If the bit 7 of the first byte is 1, the string value is represented
+      #   as a list of Huffman encoded octets
+      #   (padded with bit 1's until next octet boundary).
+      # * If the bit 7 of the first byte is 0, the string value is
+      #   represented as a list of UTF-8 encoded octets.
       #
       # @param str [String]
       # @return [String] binary string
       def string(str)
-        integer(str.bytesize, 0) << str.dup.force_encoding('binary')
+        if @options[:no_huffman]
+          integer(str.bytesize, 7) << str.dup.force_encoding('binary')
+        else
+          bytes = integer(str.bytesize, 7) << Huffman.new.encode(str)
+          bytes.setbyte(0, bytes[0].unpack("C").first | 0x80)
+          bytes
+        end
       end
 
       # Encodes header command with appropriate header representation.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-03#section-4
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-4
       #
       # @param h [Hash] header command
       # @param buffer [String]
@@ -348,7 +365,7 @@ module HTTP2
         rep = HEADREP[h[:type]]
 
         if h[:type] == :indexed
-          buffer << integer(h[:name], rep[:prefix])
+          buffer << integer(h[:name]+1, rep[:prefix])
 
         else
           if h[:name].is_a? Integer
@@ -358,15 +375,7 @@ module HTTP2
             buffer << string(h[:name])
           end
 
-          if h[:type] == :substitution
-            buffer << integer(h[:index], 0)
-          end
-
-          if h[:value].is_a? Integer
-            buffer << integer(h[:value], 0)
-          else
-            buffer << string(h[:value])
-          end
+          buffer << string(h[:value])
         end
 
         # set header representation pattern on first byte
@@ -447,7 +456,13 @@ module HTTP2
       # @param buf [String]
       # @return [String] UTF-8 encoded string
       def string(buf)
-        buf.read(integer(buf, 0)).force_encoding('utf-8')
+        huff = (buf.readbyte(0) & 0x80) == 0x80
+        len = integer(buf, 7)
+        if huff
+          Huffman.new.decode(buf, len).force_encoding('utf-8')
+        else
+          buf.read(len).force_encoding('utf-8')
+        end
       end
 
       # Decodes header command from provided buffer.
@@ -463,17 +478,17 @@ module HTTP2
         end.first
 
         header[:name] = integer(buf, type[:prefix])
-        if header[:type] != :indexed
+
+        case header[:type]
+        when :indexed
+          header[:name] == 0 and raise CompressionError.new
           header[:name] -= 1
-
-          if header[:name] == -1
+        else
+          if header[:name] == 0
             header[:name] = string(buf)
+          else
+            header[:name] -= 1
           end
-
-          if header[:type] == :substitution
-            header[:index] = integer(buf, 0)
-          end
-
           header[:value] = string(buf)
         end
 
