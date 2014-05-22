@@ -12,7 +12,8 @@ module HTTP2
       include Error
 
       BINARY = "binary"
-      private_constant :BINARY
+      EOS = 256
+      private_constant :BINARY, :EOS
 
       # Encodes provided value via huffman encoding.
       # Length is not encoded in this method.
@@ -67,6 +68,7 @@ module HTTP2
           end
           nb = nibbles.shift
           trans = MACHINE[state][1][nb]
+          trans.first == EOS and raise CompressionError.new('Huffman decode error (EOS found)')
           emit << trans.first
           state = trans.last
         end
@@ -343,4 +345,3 @@ module HTTP2
   end
 
 end
-

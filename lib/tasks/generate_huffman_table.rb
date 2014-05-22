@@ -67,7 +67,11 @@ module HuffmanTable
             bit = (input & (1 << i)) == 0 ? 0 : 1
             n = n.next[bit]
             if n.emit
-              emit << n.emit.chr('binary') unless n.emit == EOS
+              if n.emit == EOS
+                emit = EOS      # cause error on decoding
+              else
+                emit << n.emit.chr('binary')
+              end
               n = @root
             end
           end
@@ -110,7 +114,9 @@ HEADER
           n = id_state[i]
           f.print "        [#{n.final},["
           (1 << BITS_AT_ONCE).times do |t|
-            f.print %Q/[#{n.transitions[t].emit.dup.force_encoding('binary').inspect},#{state_id[n.transitions[t].node]}],/
+            emit = n.transitions[t].emit
+            emit == EOS or emit = emit.dup.force_encoding('binary')
+            f.print %Q/[#{emit.inspect},#{state_id[n.transitions[t].node]}],/
           end
           f.print "]],\n"
         end

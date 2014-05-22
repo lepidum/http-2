@@ -56,7 +56,11 @@ describe HTTP2::Header::Huffman do
     it "should raise when input is not padded by 1s" do
       plain, encoded = ["www.example.com", "e7cf9bebe89b6fb16fa9b6fe"] # note the fe at end
       encoded = [encoded].pack("H*")
-      expect { @encoder.decode(HTTP2::Buffer.new(encoded), plain.bytesize) }.to raise_error(/EOS/)
+      expect { @encoder.decode(HTTP2::Buffer.new(encoded), plain.bytesize) }.to raise_error(/EOS invalid/)
+    end
+    it "should raise when EOS is explicitly encoded" do
+      encoded = ["4efffffee7"].pack("H*") # a b EOS
+      expect { @encoder.decode(HTTP2::Buffer.new(encoded), 3) }.to raise_error(/EOS found/)
     end
   end
 end
