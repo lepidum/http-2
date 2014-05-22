@@ -84,7 +84,8 @@ module HTTP2
       # Current table of header key-value pairs.
       attr_reader :table
 
-      # Current reference set of header key-value pairs.
+      # Current reference set
+      # [index, flag]
       attr_reader :refset
 
       # Initializes compression context with appropriate client/server
@@ -104,6 +105,38 @@ module HTTP2
         @options = options
       end
 
+      # Predefined options set for ease
+      # http://mew.org/~kazu/material/2014-hpack.pdf
+      Naive   = { no_index: true, no_reference_set: true, no_huffman: true }.freeze
+      NaiveH  = { no_index: true, no_reference_set: true,                  }.freeze
+      Linear  = {                 no_reference_set: true, no_huffman: true }.freeze
+      LinearH = {                 no_reference_set: true,                  }.freeze
+      Diff    = {                                         no_huffman: true }.freeze
+      DiffH   = {                                                          }.freeze
+
+      # Finds an entry in current header table by index.
+      # Note that index is zero-based in this module.
+      #
+      # If the index is greater than the last index in the header table,
+      # an entry in the static table is dereferenced.
+      #
+      # If the index is greater than the last static index, an error is raised.
+      #
+      # @param index [Integer] zero-based index in the header table.
+      # @return [Array] [header, static?]
+      def dereference(index)
+        if index >= @table.size
+          index -= @table.size + 1
+          if index >= STATIC_TABLE.size
+            raise CompressionError.new("Index too large")
+          else
+            [STATIC_TABLE[index], true]
+          end
+        else
+          [@table[index], false]
+        end
+      end
+
       # Performs differential coding based on provided command type.
       # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.2.1
       #
@@ -112,25 +145,52 @@ module HTTP2
       def process(cmd)
         emit = nil
 
-        # indexed representation
-        if cmd[:type] == :indexed
-          # An indexed representation corresponding to an entry not present
-          # in the reference set entails the following actions:
-          # - The header corresponding to the entry is emitted.
-          # - The entry is added to the reference set.
-          #
-          # An indexed representation corresponding to an entry present in
+        case cmd[:type]
+        when :refsetempty
+          # empty refset
+          @refset.clear
+
+        when :changetablesize
+          # TODO: implement
+          @limit = cmd[:name]
+          size_check(nil)
+          # TODO: expect and verify refset emptying on next
+
+        when :indexed
+          # Indexed Representation
+          # An _indexed representation_ corresponding to an entry _present_ in
           # the reference set entails the following actions:
-          #  - The entry is removed from the reference set.
-          #
+          # o The entry is removed from the reference set.
+
           idx = cmd[:name]
-          cur = @refset.find_index {|(i,v)| i == idx}
+          cur = @refset.find_index {|i,_| i == idx}
 
           if cur
             @refset.delete_at(cur)
           else
-            emit = @table[idx]
-            @refset.push [idx, @table[idx]]
+            # An _indexed representation_ corresponding to an entry _not present_
+            # in the reference set entails the following actions:
+            emit, static = dereference(idx)
+
+            if static
+              # o  If referencing an element of the static table:
+              #    *  The header field corresponding to the referenced entry is
+              #       emitted.
+              #    *  The referenced static entry is inserted at the beginning of the
+              #       header table.
+              #    *  A reference to this new header table entry is added to the
+              #       reference set, except if this new entry didn't fit in the
+              #       header table.
+              idx = add_to_table(emit)
+              idx and @refset.push [idx]
+            else
+              # o  If referencing an element of the header table:
+              #    *  The header field corresponding to the referenced entry is
+              #       emitted.
+              #    *  The referenced header table entry is added to the reference
+              #       set.
+              @refset.push [idx]
+            end
           end
 
         else
@@ -146,32 +206,19 @@ module HTTP2
           #  - The new entry is added to the reference set.
           #
           if cmd[:name].is_a? Integer
-            k,v = @table[cmd[:name]]
+            entry, _ = dereference(cmd[:name])
+            k, v = entry
 
             cmd[:index] ||= cmd[:name]
-            cmd[:value] ||= v
+            # cmd[:value] ||= v  XXX: must have been given
             cmd[:name] = k
           end
 
           emit = [cmd[:name], cmd[:value]]
 
-          if cmd[:type] != :noindex
-            if size_check(cmd)
-
-              case cmd[:type]
-              when :incremental
-                cmd[:index] = @table.size
-              when :substitution
-                if @table[cmd[:index]].nil?
-                  raise HeaderException.new("invalid index")
-                end
-              when :prepend
-                @table = [emit] + @table
-              end
-
-              @table[cmd[:index]] = emit
-              @refset.push [cmd[:index], emit]
-            end
+          if cmd[:type] == :incremental
+            idx = add_to_table([cmd[:name], cmd[:value]])
+            idx and @refset.push [idx]
           end
         end
 
@@ -195,13 +242,6 @@ module HTTP2
           cmd = { name: idx, value: header.last, type: :incremental}
 
           # TODO: implement literal without indexing strategy
-          # TODO: implement substitution strategy (if it makes sense)
-          # if default? idx
-          #   cmd[:type] = :incremental
-          # else
-          #   cmd[:type] = :substitution
-          #   cmd[:index] = idx
-          # end
 
           return cmd
         end
@@ -218,21 +258,31 @@ module HTTP2
 
       private
 
-      # Before doing such a modification, it has to be ensured that the header
-      # table size will stay lower than or equal to the
-      # SETTINGS_HEADER_TABLE_SIZE limit. To achieve this, repeatedly, the
-      # first entry of the header table is removed, until enough space is
-      # available for the modification.
+      # Add a name-value pair to the header table.
+      # Older entries might have been evicted so that
+      # the new entry fits in the header table.
+      # Indices in the refset is kept in sync.
       #
-      # A consequence of removing one or more entries at the beginning of the
-      # header table is that the remaining entries are renumbered.  The first
-      # entry of the header table is always associated to the index 0.
+      # @param cmd [Array] [name, value]
+      # @return [Integer] index of thenewly added entry or nil if not added
+      def add_to_table(cmd)
+        if size_check(cmd)
+          @table.unshift(cmd)
+          @refset.each_index {|i| @refset[i][0] += 1}
+          0
+        else
+          nil
+        end
+      end
+
+      # To keep the header table size lower than or equal to @limit,
+      # remove one or more entries at the end of the header table.
       #
       # @param cmd [Hash]
       # @return [Boolean]
       def size_check(cmd)
         cursize = @table.join.bytesize + @table.size * 32
-        cmdsize = cmd[:name].bytesize + cmd[:value].bytesize + 32
+        cmdsize = cmd.nil? ? 0 : cmd.join.bytesize + 32
 
         # The addition of a new entry with a size greater than the
         # SETTINGS_HEADER_TABLE_SIZE limit causes all the entries from the
@@ -240,6 +290,7 @@ module HTTP2
         # header table.  The replacement of an existing entry with a new entry
         # with a size greater than the SETTINGS_HEADER_TABLE_SIZE has the same
         # consequences.
+        # TODO: check whether this still holds in HPACK-07
         if cmdsize > @limit
           @table.clear
           return false
@@ -247,17 +298,12 @@ module HTTP2
 
         cur = 0
         while (cursize + cmdsize) > @limit do
-          e = @table.shift
+          last_index = @table.size - 1
+          e = @table.pop
 
-          # When the modification of the header table is the replacement of an
-          # existing entry, the replaced entry is the one indicated in the
-          # literal representation before any entry is removed from the header
-          # table. If the entry to be replaced is removed from the header table
-          # when performing the size adjustment, the replacement entry is
-          # inserted at the beginning of the header table.
-          if cmd[:type] == :substitution && cur == cmd[:index]
-             cmd[:type] = :prepend
-          end
+          # Whenever an entry is evicted from the header table, any reference to
+          # that entry contained by the reference set is removed.
+          @refset.delete_if {|i,_| i == last_index }
 
           cursize -= (e.join.bytesize + 32)
         end
@@ -268,11 +314,6 @@ module HTTP2
       def active?(idx)
         !@refset.find {|i,_| i == idx }.nil?
       end
-
-      def default?(idx)
-        t = (@type == :request) ? REQ_DEFAULTS : RESP_DEFAULTS
-        idx < t.size
-      end
     end
 
     # Header representation as defined by the spec.
@@ -281,7 +322,7 @@ module HTTP2
       incremental:  {prefix: 6, pattern: 0x40},
       noindex:      {prefix: 4, pattern: 0x00},
       neverindexed: {prefix: 4, pattern: 0x10},
-      emptyreference: {prefix: 0, pattern: 0x30},
+      refsetempty:  {prefix: 0, pattern: 0x30},
       changetablesize: {prefix: 4, pattern: 0x20},
     }
 
@@ -494,12 +535,15 @@ module HTTP2
           mask == desc[:pattern]
         end.first
 
+        header[:type] or raise CompressionError
+
         header[:name] = integer(buf, type[:prefix])
 
         case header[:type]
         when :indexed
           header[:name] == 0 and raise CompressionError.new
           header[:name] -= 1
+        when :changetablesize, :refsetempty
         else
           if header[:name] == 0
             header[:name] = string(buf)

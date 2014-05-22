@@ -127,156 +127,130 @@ describe HTTP2::Header do
     end
   end
 
-  context "differential coding" do
-    before { pending "Not yet implemented" }
-    context "shared compression context" do
-      before(:each) { @cc = EncodingContext.new(:request) }
+  context "shared compression context" do
+    before(:each) { @cc = EncodingContext.new(:request) }
 
-      it "should be initialized with pre-defined headers" do
-        cc = EncodingContext.new(:request)
-        cc.table.size.should eq 30
+    it "should be initialized with empty headers" do
+      cc = EncodingContext.new(:request)
+      cc.table.should be_empty
 
-        cc = EncodingContext.new(:response)
-        cc.table.size.should eq 30
-      end
-
-      it "should be initialized with empty working set" do
-        @cc.refset.should be_empty
-      end
-
-      it "should update working set based on prior state" do
-        @cc.refset.should be_empty
-
-        @cc.process({name: 0, type: :indexed})
-        @cc.refset.should eq [[0, [":scheme", "http"]]]
-
-        @cc.process({name: 0, type: :indexed})
-        @cc.refset.should be_empty
-      end
-
-      context "processing" do
-        it "should toggle index representation headers in working set" do
-          @cc.process({name: 0, type: :indexed})
-          @cc.refset.first.should eq [0, [":scheme", "http"]]
-
-          @cc.process({name: 0, type: :indexed})
-          @cc.refset.should be_empty
-        end
-
-        context "no indexing" do
-          it "should process indexed header with literal value" do
-            original_table = @cc.table
-
-            emit = @cc.process({name: 3, value: "/path", type: :noindex})
-            emit.should eq [":path", "/path"]
-            @cc.refset.should be_empty
-            @cc.table.should eq original_table
-          end
-
-          it "should process indexed header with default value" do
-            original_table = @cc.table
-
-            emit = @cc.process({name: 3, type: :noindex})
-            emit.should eq [":path", "/"]
-            @cc.table.should eq original_table
-          end
-
-          it "should process literal header with literal value" do
-            original_table = @cc.table
-
-            emit = @cc.process({name: "x-custom", value: "random", type: :noindex})
-            emit.should eq ["x-custom", "random"]
-            @cc.refset.should be_empty
-            @cc.table.should eq original_table
-          end
-        end
-
-        context "incremental indexing" do
-          it "should process literal header with literal value" do
-            original_table = @cc.table.dup
-
-            @cc.process({name: "x-custom", value: "random", type: :incremental})
-            @cc.refset.first.should eq [original_table.size, ["x-custom", "random"]]
-            (@cc.table - original_table).should eq [["x-custom", "random"]]
-          end
-        end
-
-        context "substitution indexing" do
-          it "should process literal header with literal value" do
-            original_table = @cc.table.dup
-            idx = original_table.size-1
-
-            @cc.process({
-              name: "x-custom", value: "random",
-              index: idx, type: :substitution
-            })
-
-            @cc.refset.first.should eq [idx, ["x-custom", "random"]]
-            (@cc.table - original_table).should eq [["x-custom", "random"]]
-            (original_table - @cc.table).should eq [["via", ""]]
-          end
-
-          it "should raise error on invalid substitution index" do
-            lambda {
-              @cc.process({
-                name: "x-custom", value: "random",
-                index: 1000, type: :substitution
-              })
-            }.should raise_error(HeaderException)
-          end
-        end
-
-        context "size bounds" do
-          it "should drop headers from beginning of table" do
-            cc = EncodingContext.new(:request, 2048)
-            original_table = cc.table.dup
-            original_size = original_table.join.bytesize +
-                            original_table.size * 32
-
-            cc.process({
-              name: "x-custom",
-              value: "a" * (2048 - original_size),
-              type: :incremental
-            })
-
-            cc.table.last[0].should eq "x-custom"
-            cc.table.size.should eq original_table.size
-           end
-
-          it "should prepend on dropped substitution index" do
-            cc = EncodingContext.new(:request, 2048)
-            original_table = cc.table.dup
-            original_size = original_table.join.bytesize +
-                            original_table.size * 32
-
-            cc.process({
-              name: "x-custom",
-              value: "a" * (2048 - original_size),
-              index: 0, type: :substitution
-            })
-
-            cc.table[0][0].should eq "x-custom"
-            cc.table[1][0].should eq ":scheme"
-          end
-        end
-
-        it "should clear table if entry exceeds table size" do
-          cc = EncodingContext.new(:request, 2048)
-
-          h = { name: "x-custom", value: "a", index: 0, type: :incremental }
-          e = { name: "large", value: "a" * 2048, index: 0}
-
-          cc.process(h)
-          cc.process(e.merge({type: :substitution}))
-          cc.table.should be_empty
-
-          cc.process(h)
-          cc.process(e.merge({type: :incremental}))
-          cc.table.should be_empty
-        end
-      end
+      cc = EncodingContext.new(:response)
+      cc.table.should be_empty
     end
 
+    it "should be initialized with empty working set" do
+      @cc.refset.should be_empty
+    end
+
+    it "should update reference set based on prior state" do
+      @cc.refset.should be_empty
+
+      @cc.process({name: 6, type: :indexed})
+      @cc.refset.should eq [[0]]
+
+      @cc.process({name: 6, type: :indexed})
+      @cc.refset.should eq [[1],[0]]
+
+      @cc.process({name: 0, type: :indexed})
+      @cc.refset.should eq [[1]]
+
+      @cc.process({name: 1, type: :indexed})
+      @cc.refset.should be_empty
+    end
+
+    context "processing" do
+      it "should toggle index representation headers in working set" do
+        @cc.process({name: 6, type: :indexed})
+        @cc.refset.first.should eq [0]
+
+        @cc.process({name: 0, type: :indexed})
+        @cc.refset.should be_empty
+      end
+
+      context "no indexing" do
+        it "should process indexed header with literal value" do
+          original_table = @cc.table
+
+          emit = @cc.process({name: 4, value: "/path", type: :noindex})
+          emit.should eq [":path", "/path"]
+          @cc.refset.should be_empty
+          @cc.table.should eq original_table
+        end
+
+        it "should process literal header with literal value" do
+          original_table = @cc.table
+
+          emit = @cc.process({name: "x-custom", value: "random", type: :noindex})
+          emit.should eq ["x-custom", "random"]
+          @cc.refset.should be_empty
+          @cc.table.should eq original_table
+        end
+      end
+
+      context "incremental indexing" do
+        it "should process literal header with literal value" do
+          original_table = @cc.table.dup
+
+          @cc.process({name: "x-custom", value: "random", type: :incremental})
+          @cc.refset.first.should eq [0]
+          (@cc.table - original_table).should eq [["x-custom", "random"]]
+        end
+      end
+
+      context "size bounds" do
+        it "should drop headers from end of table" do
+          cc = EncodingContext.new(:request, 2048)
+          cc.instance_eval do
+            add_to_table(["test1", "1" * 1024])
+            add_to_table(["test2", "2" * 500])
+          end
+
+          original_table = cc.table.dup
+          original_size = original_table.join.bytesize +
+            original_table.size * 32
+
+          cc.process({
+                       name: "x-custom",
+                       value: "a" * (2048 - original_size),
+                       type: :incremental
+                     })
+
+          cc.table.first[0].should eq "x-custom"
+          cc.table.size.should eq original_table.size # number of entries
+        end
+      end
+
+      it "should clear table if entry exceeds table size" do
+        cc = EncodingContext.new(:request, 2048)
+        cc.instance_eval do
+          add_to_table(["test1", "1" * 1024])
+          add_to_table(["test2", "2" * 500])
+        end
+
+        h = { name: "x-custom", value: "a", index: 0, type: :incremental }
+        e = { name: "large", value: "a" * 2048, index: 0}
+
+        cc.process(h)
+        cc.process(e.merge({type: :incremental}))
+        cc.table.should be_empty
+      end
+
+      it "should shrink table if set smaller size" do
+        cc = EncodingContext.new(:request, 2048)
+        cc.instance_eval do
+          add_to_table(["test1", "1" * 1024])
+          add_to_table(["test2", "2" * 500])
+        end
+
+        cc.process({type: :changetablesize, name: 1500})
+        cc.table.size.should be 1
+        cc.table.first[0].should eq 'test2'
+      end
+    end
+  end
+
+  context "differential coding" do
+    before { pending "Not yet implemented" }
     context "integration" do
       before (:all) { @cc = EncodingContext.new(:request) }
 
