@@ -123,17 +123,17 @@ module HTTP2
       # If the index is greater than the last static index, an error is raised.
       #
       # @param index [Integer] zero-based index in the header table.
-      # @return [Array] [header, static?]
+      # @return [Array] [key, value, static?]
       def dereference(index)
         if index >= @table.size
-          index -= @table.size + 1
+          index -= @table.size
           if index >= STATIC_TABLE.size
             raise CompressionError.new("Index too large")
           else
-            [STATIC_TABLE[index], true]
+            [*STATIC_TABLE[index], true]
           end
         else
-          [@table[index], false]
+          [*@table[index], false]
         end
       end
 
@@ -170,7 +170,8 @@ module HTTP2
           else
             # An _indexed representation_ corresponding to an entry _not present_
             # in the reference set entails the following actions:
-            emit, static = dereference(idx)
+            k, v, static = dereference(idx)
+            emit = [k, v]
 
             if static
               # o  If referencing an element of the static table:
@@ -206,18 +207,17 @@ module HTTP2
           #  - The new entry is added to the reference set.
           #
           if cmd[:name].is_a? Integer
-            entry, _ = dereference(cmd[:name])
-            k, v = entry
+            k, v, _ = dereference(cmd[:name])
 
             cmd[:index] ||= cmd[:name]
-            # cmd[:value] ||= v  XXX: must have been given
+            cmd[:value] ||= v
             cmd[:name] = k
           end
 
           emit = [cmd[:name], cmd[:value]]
 
           if cmd[:type] == :incremental
-            idx = add_to_table([cmd[:name], cmd[:value]])
+            idx = add_to_table(emit)
             idx and @refset.push [idx]
           end
         end

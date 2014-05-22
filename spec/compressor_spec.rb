@@ -249,39 +249,10 @@ describe HTTP2::Header do
     end
   end
 
-  context "differential coding" do
+  context "decode" do
     before { pending "Not yet implemented" }
-    context "integration" do
+    context "decoding" do
       before (:all) { @cc = EncodingContext.new(:request) }
-
-      it "should match first header set in spec appendix" do
-        req_headers = [
-          {name: 3, value: "/my-example/index.html"},
-          {name: 11, value: "my-user-agent"},
-          {name: "mynewheader", value: "first"}
-        ]
-
-        req_headers.each {|h| @cc.process(h.merge({type: :incremental})) }
-
-        @cc.table[30].should eq [":path", "/my-example/index.html"]
-        @cc.table[31].should eq ["user-agent", "my-user-agent"]
-        @cc.table[32].should eq req_headers[2].values
-      end
-
-      it "should match second header set in spec appendix" do
-        @cc.process({name: 30, type: :indexed})
-        @cc.process({name: 31, type: :indexed})
-        @cc.process({
-          name: 3, value: "/my-example/resources/script.js",
-          index: 30, type: :substitution
-        })
-        @cc.process({name: 32, value: "second", type: :incremental})
-
-        @cc.table[30].should eq [":path", "/my-example/resources/script.js"]
-        @cc.table[31].should eq ["user-agent", "my-user-agent"]
-        @cc.table[32].should eq ["mynewheader", "first"]
-        @cc.table[33].should eq ["mynewheader", "second"]
-      end
     end
   end
 
