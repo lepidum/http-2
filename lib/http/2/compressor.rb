@@ -396,7 +396,8 @@ module HTTP2
         if @options[:no_huffman]
           integer(str.bytesize, 7) << str.dup.force_encoding('binary')
         else
-          bytes = integer(str.bytesize, 7) << Huffman.new.encode(str)
+          huffman = Huffman.new.encode(str)
+          bytes = integer(huffman.bytesize, 7) << huffman
           bytes.setbyte(0, bytes[0].unpack("C").first | 0x80)
           bytes
         end
@@ -523,13 +524,11 @@ module HTTP2
       # @param buf [String]
       # @return [String] UTF-8 encoded string
       def string(buf)
-        huff = (buf.readbyte(0) & 0x80) == 0x80
+        huffman = (buf.readbyte(0) & 0x80) == 0x80
         len = integer(buf, 7)
-        if huff
-          Huffman.new.decode(buf, len).force_encoding('utf-8')
-        else
-          buf.read(len).force_encoding('utf-8')
-        end
+        str = buf.read(len).force_encoding('utf-8')
+        huffman and str = Huffman.new.decode(Buffer.new(str)).force_encoding('utf-8')
+        str
       end
 
       # Decodes header command from provided buffer.

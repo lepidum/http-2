@@ -327,7 +327,7 @@ describe HTTP2::Header do
         type: :request,
         table_size: 4096,
         streams: [
-          { wire: "8287 8644 8fe7 cf9b ebe8 9b6f b16f a9b6 ff",
+          { wire: "8287 8644 8ce7 cf9b ebe8 9b6f b16f a9b6 ff",
             emitted: [
               [":method", "GET"],
               [":scheme", "http"],
@@ -342,7 +342,7 @@ describe HTTP2::Header do
             ],
             refset: [0,1,2,3],
           },
-          { wire: "5c88 b9b9 9495 56bf",
+          { wire: "5c86 b9b9 9495 56bf",
             emitted: [
               ["cache-control", "no-cache"],
               [":authority", "www.example.com"],
@@ -359,7 +359,7 @@ describe HTTP2::Header do
             ],
             refset: [0,1,2,3,4],
           },
-          { wire: "3085 8c8b 8440 8a57 1c5c db73 7b2f af8c
+          { wire: "3085 8c8b 8440 8857 1c5c db73 7b2f af89
                    571c 5cdb 7372 4d9c 57",
             emitted: [
               [":method", "GET"],
@@ -446,7 +446,7 @@ describe HTTP2::Header do
       { title: "D.6.  Response Examples with Huffman",
         table_size: 256,
         streams: [
-          { wire: "4883 4017 5987 bf06 724b 9763 9dd6 dbb2
+          { wire: "4882 4017 5985 bf06 724b 9763 93d6 dbb2
                    9884 de2a 7188 0506 2098 5131 09b5 6ba3
                    7197 adce bf19 8e7e 7cf9 bebe 89b6 fb16
                    fa9b 6f",
@@ -479,9 +479,9 @@ describe HTTP2::Header do
             ],
             refset: [0,1,2,3],
           },
-          { wire: "8484 439d d6db b298 84de 2a71 8805 0620
+          { wire: "8484 4393 d6db b298 84de 2a71 8805 0620
                    9851 3111 b56b a35e 84ab dd97 ff84 8483
-                   837b b8e0 d6cf 9f6e 8f9f d3e5 f6fa 76fe
+                   837b b1e0 d6cf 9f6e 8f9f d3e5 f6fa 76fe
                    fd3c 7edf 9eff 1f2f 0f3c fe9f 6fcf 7f8f
                    879f 61ad 4f4c c9a9 73a2 200e c372 5e18
                    b1b7 4e3f",

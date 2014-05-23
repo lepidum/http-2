@@ -18,7 +18,7 @@ describe HTTP2::Header::Huffman do
     before(:all) { @encoder = HTTP2::Header::Huffman.new }
     huffman_examples.each do |plain, encoded|
       it "should decode #{encoded} into #{plain}" do
-        @encoder.decode(HTTP2::Buffer.new([encoded].pack("H*")), plain.bytesize).should eq plain
+        @encoder.decode(HTTP2::Buffer.new([encoded].pack("H*"))).should eq plain
       end
       
       [
@@ -33,34 +33,24 @@ describe HTTP2::Header::Huffman do
         it "should encode then decode '#{string}' into the same" do
           s = string.dup.force_encoding('binary')
           encoded = @encoder.encode(s)
-          @encoder.decode(HTTP2::Buffer.new(encoded),
-                          s.bytesize).should eq s
+          @encoder.decode(HTTP2::Buffer.new(encoded)).should eq s
         end
       end
-    end
-
-    it "should leave excessive bytes in the buffer" do
-      plain, encoded = huffman_examples[0]
-      encoded = [encoded].pack("H*")
-      excessive = "abc".force_encoding('binary')
-      buffer = HTTP2::Buffer.new(encoded + excessive)
-      expect { @encoder.decode(buffer, plain.bytesize) }.not_to raise_error
-      buffer.should == excessive
     end
 
     it "should raise when input is shorter than expected" do
       plain, encoded = huffman_examples[0]
       encoded = [encoded].pack("H*")
-      expect { @encoder.decode(HTTP2::Buffer.new(encoded[0...-1]), plain.bytesize) }.to raise_error(/short/)
+      expect { @encoder.decode(HTTP2::Buffer.new(encoded[0...-1])) }.to raise_error(/EOS invalid/)
     end
     it "should raise when input is not padded by 1s" do
       plain, encoded = ["www.example.com", "e7cf9bebe89b6fb16fa9b6fe"] # note the fe at end
       encoded = [encoded].pack("H*")
-      expect { @encoder.decode(HTTP2::Buffer.new(encoded), plain.bytesize) }.to raise_error(/EOS invalid/)
+      expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS invalid/)
     end
     it "should raise when EOS is explicitly encoded" do
       encoded = ["4efffffee7"].pack("H*") # a b EOS
-      expect { @encoder.decode(HTTP2::Buffer.new(encoded), 3) }.to raise_error(/EOS found/)
+      expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS found/)
     end
   end
 end

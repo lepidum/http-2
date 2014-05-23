@@ -53,19 +53,12 @@ module HTTP2
       # Decoding stops when decoded +len+ characters or +buf+ exhausted.
       #
       # @param buf [Buffer]
-      # @param len [Integer]
       # @return [String] binary string
-      def decode(buf, len)
+      def decode(buf)
         emit = ''
         state = 0 # start state
-        nibbles = []
-        while emit.bytesize < len
-          if nibbles.empty?
-            buf.empty? and raise CompressionError.new('Huffman decode error (too short)')
-            c = buf.getbyte
-            # Assume BITS_AT_ONCE == 4
-            nibbles = [ (c & 0xf0) >> 4, c & 0xf ]
-          end
+        nibbles = buf.chars.flat_map{|x| [(x.ord & 0xf0) >> 4, x.ord & 0xf]}
+        until nibbles.empty?
           nb = nibbles.shift
           trans = MACHINE[state][1][nb]
           trans.first == EOS and raise CompressionError.new('Huffman decode error (EOS found)')
