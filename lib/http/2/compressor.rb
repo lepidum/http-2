@@ -94,13 +94,14 @@ module HTTP2
       # @param type [Symbol] either :request or :response
       # @param limit [Integer] maximum header table size in bytes
       # @param options [Hash] encoding options
-      #   :no_huffman       => true    Do not use Huffman encodings
-      #   :no_index         => true    Do not use incremental indexing
-      #   :no_reference_set => true    Do not use reference set differencing
-      def initialize(type, limit = 4096, options = {})
+      #   :table_size       [Integer]  maximum header table size in bytes
+      #   :no_huffman       [Boolean]  do not use Huffman encodings when compressing
+      #   :no_index         [Boolean]  do not use incremental indexing when compressing
+      #   :no_reference_set [Boolean]  do not use reference set when compressing
+      def initialize(type, options = {})
         @type = type
         @table = []
-        @limit = limit
+        @limit = options[:table_size] || 4096
         @refset = []
         @options = options
       end
@@ -135,6 +136,10 @@ module HTTP2
         else
           [*@table[index], false]
         end
+      end
+
+      def unmark
+        @refset.each {|r| r[1] = nil}
       end
 
       # Performs differential coding based on provided command type.
@@ -183,14 +188,14 @@ module HTTP2
               #       reference set, except if this new entry didn't fit in the
               #       header table.
               idx = add_to_table(emit)
-              idx and @refset.push [idx]
+              idx and @refset.push [idx, :emitted]
             else
               # o  If referencing an element of the header table:
               #    *  The header field corresponding to the referenced entry is
               #       emitted.
               #    *  The referenced header table entry is added to the reference
               #       set.
-              @refset.push [idx]
+              @refset.push [idx, :emitted]
             end
           end
 
@@ -218,7 +223,7 @@ module HTTP2
 
           if cmd[:type] == :incremental
             idx = add_to_table(emit)
-            idx and @refset.push [idx]
+            idx and @refset.push [idx, :emitted]
           end
         end
 
@@ -322,7 +327,7 @@ module HTTP2
       incremental:  {prefix: 6, pattern: 0x40},
       noindex:      {prefix: 4, pattern: 0x00},
       neverindexed: {prefix: 4, pattern: 0x10},
-      refsetempty:  {prefix: 0, pattern: 0x30},
+      refsetempty:  {prefix: :none, pattern: 0x30},
       changetablesize: {prefix: 4, pattern: 0x20},
     }
 
@@ -405,9 +410,13 @@ module HTTP2
       def header(h, buffer = Buffer.new)
         rep = HEADREP[h[:type]]
 
-        if h[:type] == :indexed
+        case h[:type]
+        when :indexed
           buffer << integer(h[:name]+1, rep[:prefix])
-
+        when :refsetempty
+          buffer << 0.chr(BINARY)
+        when :changetablesize
+          buffer << integer(h[:size], rep[:prefix])
         else
           if h[:name].is_a? Integer
             buffer << integer(h[:name]+1, rep[:prefix])
@@ -486,8 +495,8 @@ module HTTP2
     #   server_role = Decompressor.new(:request)
     #   client_role = Decompressor.new(:response)
     class Decompressor
-      def initialize(type)
-        @cc = EncodingContext.new(type)
+      def initialize(type, options = {})
+        @cc = EncodingContext.new(type, options)
       end
 
       # Decodes integer value from provided buffer.
@@ -531,19 +540,22 @@ module HTTP2
 
         header = {}
         header[:type], type = HEADREP.select do |t, desc|
-          mask = (peek >> desc[:prefix]) << desc[:prefix]
+          mask = desc[:prefix] == :none ? peek : (peek >> desc[:prefix]) << desc[:prefix]
           mask == desc[:pattern]
         end.first
 
         header[:type] or raise CompressionError
 
-        header[:name] = integer(buf, type[:prefix])
+        type[:prefix] == :none or header[:name] = integer(buf, type[:prefix])
 
         case header[:type]
         when :indexed
           header[:name] == 0 and raise CompressionError.new
           header[:name] -= 1
-        when :changetablesize, :refsetempty
+        when :changetablesize
+          header[:size] = integer(buf, type[:prefix])
+        when :refsetempty
+          buf.getbyte # consume the byte
         else
           if header[:name] == 0
             header[:name] = string(buf)
@@ -572,9 +584,10 @@ module HTTP2
       # @return [Array] set of HTTP headers
       def decode(buf)
         set = []
+        @cc.unmark
         set << @cc.process(header(buf)) while !buf.empty?
-        @cc.refset.each do |i,header|
-          set << header if !set.include? header
+        @cc.refset.each do |i,mark|
+          mark == :emitted or set << @cc.table[i]
         end
 
         set.compact

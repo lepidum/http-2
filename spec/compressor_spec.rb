@@ -146,13 +146,13 @@ describe HTTP2::Header do
       @cc.refset.should be_empty
 
       @cc.process({name: 6, type: :indexed})
-      @cc.refset.should eq [[0]]
+      @cc.refset.should eq [[0, :emitted]]
 
       @cc.process({name: 6, type: :indexed})
-      @cc.refset.should eq [[1],[0]]
+      @cc.refset.should eq [[1, :emitted],[0, :emitted]]
 
       @cc.process({name: 0, type: :indexed})
-      @cc.refset.should eq [[1]]
+      @cc.refset.should eq [[1, :emitted]]
 
       @cc.process({name: 1, type: :indexed})
       @cc.refset.should be_empty
@@ -161,45 +161,57 @@ describe HTTP2::Header do
     context "processing" do
       it "should toggle index representation headers in working set" do
         @cc.process({name: 6, type: :indexed})
-        @cc.refset.first.should eq [0]
+        @cc.refset.first.should eq [0, :emitted]
 
         @cc.process({name: 0, type: :indexed})
         @cc.refset.should be_empty
       end
 
-      context "no indexing" do
-        it "should process indexed header with literal value" do
-          original_table = @cc.table
+      [ ["no indexing", :noindex],
+        ["never indexed", :neverindexed]].each do |desc, type|
+        context "#{desc}" do
+          it "should process indexed header with literal value" do
+            original_table = @cc.table.dup
 
-          emit = @cc.process({name: 4, value: "/path", type: :noindex})
-          emit.should eq [":path", "/path"]
-          @cc.refset.should be_empty
-          @cc.table.should eq original_table
-        end
+            emit = @cc.process({name: 4, value: "/path", type: type})
+            emit.should eq [":path", "/path"]
+            @cc.refset.should be_empty
+            @cc.table.should eq original_table
+          end
 
-        it "should process literal header with literal value" do
-          original_table = @cc.table
+          it "should process literal header with literal value" do
+            original_table = @cc.table.dup
 
-          emit = @cc.process({name: "x-custom", value: "random", type: :noindex})
-          emit.should eq ["x-custom", "random"]
-          @cc.refset.should be_empty
-          @cc.table.should eq original_table
+            emit = @cc.process({name: "x-custom", value: "random", type: type})
+            emit.should eq ["x-custom", "random"]
+            @cc.refset.should be_empty
+            @cc.table.should eq original_table
+          end
         end
       end
 
       context "incremental indexing" do
+        it "should process indexed header with literal value" do
+          original_table = @cc.table.dup
+
+          emit = @cc.process({name: 4, value: "/path", type: :incremental})
+          emit.should eq [":path", "/path"]
+          @cc.refset.first.should eq [0, :emitted]
+          (@cc.table - original_table).should eq [[":path", "/path"]]
+        end
+
         it "should process literal header with literal value" do
           original_table = @cc.table.dup
 
           @cc.process({name: "x-custom", value: "random", type: :incremental})
-          @cc.refset.first.should eq [0]
+          @cc.refset.first.should eq [0, :emitted]
           (@cc.table - original_table).should eq [["x-custom", "random"]]
         end
       end
 
       context "size bounds" do
         it "should drop headers from end of table" do
-          cc = EncodingContext.new(:request, 2048)
+          cc = EncodingContext.new(:request, table_size: 2048)
           cc.instance_eval do
             add_to_table(["test1", "1" * 1024])
             add_to_table(["test2", "2" * 500])
@@ -221,7 +233,7 @@ describe HTTP2::Header do
       end
 
       it "should clear table if entry exceeds table size" do
-        cc = EncodingContext.new(:request, 2048)
+        cc = EncodingContext.new(:request, table_size: 2048)
         cc.instance_eval do
           add_to_table(["test1", "1" * 1024])
           add_to_table(["test2", "2" * 500])
@@ -236,7 +248,7 @@ describe HTTP2::Header do
       end
 
       it "should shrink table if set smaller size" do
-        cc = EncodingContext.new(:request, 2048)
+        cc = EncodingContext.new(:request, table_size: 2048)
         cc.instance_eval do
           add_to_table(["test1", "1" * 1024])
           add_to_table(["test2", "2" * 500])
@@ -250,9 +262,279 @@ describe HTTP2::Header do
   end
 
   context "decode" do
-    before { pending "Not yet implemented" }
-    context "decoding" do
-      before (:all) { @cc = EncodingContext.new(:request) }
+    spec_examples = [
+      { title: "D.3. Request Examples without Huffman",
+        type: :request,
+        table_size: 4096,
+        streams: [
+          { wire: "8287 8644 0f77 7777 2e65 7861 6d70 6c65
+                   2e63 6f6d",
+            emitted: [
+              [":method", "GET"],
+              [":scheme", "http"],
+              [":path", "/"],
+              [":authority", "www.example.com"],
+            ],
+            table: [
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            refset: [0,1,2,3],
+          },
+          { wire: "5c08 6e6f 2d63 6163 6865",
+            emitted: [
+              ["cache-control", "no-cache"],
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            table: [
+              ["cache-control", "no-cache"],
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            refset: [0,1,2,3,4],
+          },
+          { wire: "3085 8c8b 8440 0a63 7573 746f 6d2d 6b65
+                   790c 6375 7374 6f6d 2d76 616c 7565",
+            emitted: [
+              [":method", "GET"],
+              [":scheme", "https"],
+              [":path", "/index.html"],
+              [":authority", "www.example.com"],
+              ["custom-key", "custom-value"],
+            ],
+            table: [
+              ["custom-key", "custom-value"],
+              [":path", "/index.html"],
+              [":scheme", "https"],
+              ["cache-control", "no-cache"],
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            refset: [0,1,2,4,7],
+          }
+        ],
+      },
+      { title: "D.4.  Request Examples with Huffman",
+        type: :request,
+        table_size: 4096,
+        streams: [
+          { wire: "8287 8644 8fe7 cf9b ebe8 9b6f b16f a9b6 ff",
+            emitted: [
+              [":method", "GET"],
+              [":scheme", "http"],
+              [":path", "/"],
+              [":authority", "www.example.com"],
+            ],
+            table: [
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            refset: [0,1,2,3],
+          },
+          { wire: "5c88 b9b9 9495 56bf",
+            emitted: [
+              ["cache-control", "no-cache"],
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            table: [
+              ["cache-control", "no-cache"],
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            refset: [0,1,2,3,4],
+          },
+          { wire: "3085 8c8b 8440 8a57 1c5c db73 7b2f af8c
+                   571c 5cdb 7372 4d9c 57",
+            emitted: [
+              [":method", "GET"],
+              [":scheme", "https"],
+              [":path", "/index.html"],
+              [":authority", "www.example.com"],
+              ["custom-key", "custom-value"],
+            ],
+            table: [
+              ["custom-key", "custom-value"],
+              [":path", "/index.html"],
+              [":scheme", "https"],
+              ["cache-control", "no-cache"],
+              [":authority", "www.example.com"],
+              [":path", "/"],
+              [":scheme", "http"],
+              [":method", "GET"],
+            ],
+            refset: [0,1,2,4,7],
+          },
+        ],
+      },
+      { title: "D.5.  Response Examples without Huffman",
+        table_size: 256,
+        streams: [
+          { wire: "4803 3330 3259 0770 7269 7661 7465 631d
+                   4d6f 6e2c 2032 3120 4f63 7420 3230 3133
+                   2032 303a 3133 3a32 3120 474d 5471 1768
+                   7474 7073 3a2f 2f77 7777 2e65 7861 6d70
+                   6c65 2e63 6f6d",
+            emitted: [
+              [":status", "302"],
+              ["cache-control", "private"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["location", "https://www.example.com"],
+            ],
+            table: [
+              ["location", "https://www.example.com"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["cache-control", "private"],
+              [":status", "302"],
+            ],
+            refset: [0,1,2,3],
+          },
+          { wire: "8c",
+            emitted: [
+              [":status", "200"],
+              ["location", "https://www.example.com"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["cache-control", "private"],
+            ],
+            table: [
+              [":status", "200"],
+              ["location", "https://www.example.com"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["cache-control", "private"],
+            ],
+            refset: [0,1,2,3],
+          },
+          { wire: "8484 431d 4d6f 6e2c 2032 3120 4f63 7420
+                   3230 3133 2032 303a 3133 3a32 3220 474d
+                   545e 0467 7a69 7084 8483 837b 3866 6f6f
+                   3d41 5344 4a4b 4851 4b42 5a58 4f51 5745
+                   4f50 4955 4158 5157 454f 4955 3b20 6d61
+                   782d 6167 653d 3336 3030 3b20 7665 7273
+                   696f 6e3d 31",
+            emitted: [
+              ["cache-control", "private"],
+              ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
+              ["content-encoding", "gzip"],
+              ["location", "https://www.example.com"],
+              [":status", "200"],
+              ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"],
+            ],
+            table: [
+              ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"],
+              ["content-encoding", "gzip"],
+              ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
+            ],
+            refset: [0,1,2],
+          },
+        ],
+      },
+      { title: "D.6.  Response Examples with Huffman",
+        table_size: 256,
+        streams: [
+          { wire: "4883 4017 5987 bf06 724b 9763 9dd6 dbb2
+                   9884 de2a 7188 0506 2098 5131 09b5 6ba3
+                   7197 adce bf19 8e7e 7cf9 bebe 89b6 fb16
+                   fa9b 6f",
+            emitted: [
+              [":status", "302"],
+              ["cache-control", "private"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["location", "https://www.example.com"],
+            ],
+            table: [
+              ["location", "https://www.example.com"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["cache-control", "private"],
+              [":status", "302"],
+            ],
+            refset: [0,1,2,3],
+          },
+          { wire: "8c",
+            emitted: [
+              [":status", "200"],
+              ["location", "https://www.example.com"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["cache-control", "private"],
+            ],
+            table: [
+              [":status", "200"],
+              ["location", "https://www.example.com"],
+              ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+              ["cache-control", "private"],
+            ],
+            refset: [0,1,2,3],
+          },
+          { wire: "8484 439d d6db b298 84de 2a71 8805 0620
+                   9851 3111 b56b a35e 84ab dd97 ff84 8483
+                   837b b8e0 d6cf 9f6e 8f9f d3e5 f6fa 76fe
+                   fd3c 7edf 9eff 1f2f 0f3c fe9f 6fcf 7f8f
+                   879f 61ad 4f4c c9a9 73a2 200e c372 5e18
+                   b1b7 4e3f",
+            emitted: [
+              ["cache-control", "private"],
+              ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
+              ["content-encoding", "gzip"],
+              ["location", "https://www.example.com"],
+              [":status", "200"],
+              ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"],
+            ],
+            table: [
+              ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"],
+              ["content-encoding", "gzip"],
+              ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
+            ],
+            refset: [0,1,2],
+          },
+        ],
+      },
+    ]
+
+    spec_examples.each do |ex|
+      context "spec example #{ex[:title]}" do
+        ex[:streams].size.times do |nth|
+          context "request #{nth+1}" do
+            before { @dc = Decompressor.new(ex[:type], table_size: ex[:table_size]) }
+            before do
+              (0...nth).each do |i|
+                bytes = [ex[:streams][i][:wire].delete(" \n")].pack("H*")
+                @dc.decode(HTTP2::Buffer.new(bytes))
+              end
+            end
+            subject do
+              bytes = [ex[:streams][nth][:wire].delete(" \n")].pack("H*")
+              @emitted = @dc.decode(HTTP2::Buffer.new(bytes))
+            end
+            it "should emit expected headers" do
+              subject
+              Set[*@emitted].should eq Set[*ex[:streams][nth][:emitted]]
+            end
+            it "should update header table" do
+              subject
+              @dc.instance_eval{@cc.table}.should eq ex[:streams][nth][:table]
+            end
+            it "should update refset" do
+              subject
+              Set[*@dc.instance_eval{@cc.refset}.map{|r|r.first}].should eq \
+              Set[*ex[:streams][nth][:refset]]
+            end
+          end
+        end
+      end
     end
   end
 
