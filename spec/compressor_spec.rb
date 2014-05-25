@@ -461,7 +461,7 @@ describe HTTP2::Header do
         streams: [
           { wire: "4882 4017 5985 bf06 724b 9763 93d6 dbb2
                    9884 de2a 7188 0506 2098 5131 09b5 6ba3
-                   7197 adce bf19 8e7e 7cf9 bebe 89b6 fb16
+                   7191 adce bf19 8e7e 7cf9 bebe 89b6 fb16
                    fa9b 6f",
             emitted: [
               [":status", "302"],

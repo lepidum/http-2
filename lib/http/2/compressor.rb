@@ -555,8 +555,10 @@ module HTTP2
       def string(buf)
         huffman = (buf.readbyte(0) & 0x80) == 0x80
         len = integer(buf, 7)
-        str = buf.read(len).force_encoding('utf-8')
-        huffman and str = Huffman.new.decode(Buffer.new(str)).force_encoding('utf-8')
+        str = buf.read(len)
+        str.bytesize == len or raise CompressionError.new("string too short")
+        huffman and str = Huffman.new.decode(Buffer.new(str))
+        str = str.force_encoding('utf-8')
         str
       end
 
