@@ -153,7 +153,7 @@ module HTTP2
       # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.2.1
       #
       # @param cmd [Hash] { type:, name:, value:, index: }
-      # @param block [Block(refset_entry)] called when a refset entry is evicted
+      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Hash] emitted header
       def process(cmd, &block)
         emit = nil
@@ -265,6 +265,7 @@ module HTTP2
       #
       # @param headers [Array] [[name, value], ...]
       def encode(headers)
+        puts "\n**** encode #{headers}"
         # Based on Tatsuhiro's algorithm
         # - http://lists.w3.org/Archives/Public/ietf-http-wg/2013JulSep/1135.html
 
@@ -278,81 +279,85 @@ module HTTP2
         unmark
 
         headers.each do |h|
-          again = true
-          again = catch(:retry) do
-            # Retry may happen when eviction of a common header happens
-            on_evict = lambda do |r|
-              if r.last == :common
-                # When evicting a header table entry that is referred in refset,
-                # and marked as :common, the header should be emitted before eviction.
-                c = removecmd(r.first)
-                commands << c << c
-                2.times { process(c) } # this changes the index for h!
-                throw(:retry, true)
-              end
+          puts "----before\ninput = #{h}"
+          puts "  -- trying addcmd: #{h};\n    table = #{@table.inspect};\n    refset = #{@refset.inspect}"
+
+          cmd = addcmd(h)
+
+          # Retry may happen when eviction of a common header happens
+          on_evict = lambda do |r, e|
+            puts "  -- on_evict #{r}, #{e}  while adding cmd = #{cmd}"
+            if r.last == :common
+              puts "    -- evicting :common marked refset"
+              # When evicting a header table entry that is referred in refset,
+              # and marked as :common, the header should be emitted before eviction.
+              c = removecmd(r.first)
+              commands << c << c
+              puts "  --after evict\n  commands = #{commands.inspect};\n    table = #{@table.inspect};\n    refset = #{@refset.inspect}"
             end
+          end
 
-            cmd = addcmd(h)
-            case cmd[:type]
-            when :indexed
-              refset_entry = @refset.find {|r| r.first == cmd[:name]}
-              if refset_entry
-                # 1.2. If name/value pair is present in the header table, and the
-                # corresponding entry in the header table is in the reference
-                # set:
+          case cmd[:type]
+          when :indexed
+            refset_entry = @refset.find {|r| r.first == cmd[:name]}
+            if refset_entry
+              # 1.2. If name/value pair is present in the header table, and the
+              # corresponding entry in the header table is in the reference
+              # set:
 
-                # We can assume refset_entry points to an entry
-                # in header table, not static.
-                # This cmd is already in the header table,
-                # therefore does not cause any table eviction.
-                case refset_entry.last
-                when :common
-                  # 1.2.1. If the entry is marked as "common-header", then this is
-                  # the 2nd occurrence of the same indexed representation. To
-                  # encode this name/value pair, we have to encode 4 indexed
-                  # representation. 2 for the 1st one (which was the
-                  # name/value pair processed in 1.2.3.), and the another 2
-                  # for the current name/value pair.  Unmark the
-                  # entry "common-header" and mark it "emitted".
-                  commands << cmd << cmd << cmd << cmd
-                  4.times { process(cmd) } # this re-enters cmd into refset with :emitted
-                when :emitted
-                  # 1.2.2. If the entry is marked as "emitted", then this is also the
-                  # occurrences of the same indexed representation. But this time,
-                  # we just encode 2 indexed representations.
-                  commands << cmd << cmd
-                  2.times { process(cmd) } # this re-enters cmd into refset with :emitted
-                else
-                  # 1.2.3. Otherwise, just mark the entry "common-header" and not
-                  # encode it at the moment.
-                  refset_entry[1] = :common
-                end
+              # We can assume refset_entry points to an entry
+              # in header table, not static.
+              # This cmd is already in the header table,
+              # therefore does not cause any table eviction.
+              case refset_entry.last
+              when :common
+                # 1.2.1. If the entry is marked as "common-header", then this is
+                # the 2nd occurrence of the same indexed representation. To
+                # encode this name/value pair, we have to encode 4 indexed
+                # representation. 2 for the 1st one (which was the
+                # name/value pair processed in 1.2.3.), and the another 2
+                # for the current name/value pair.  Unmark the
+                # entry "common-header" and mark it "emitted".
+                commands << cmd << cmd << cmd << cmd
+                refset_entry[1] = :emitted
+                # 4.times { process(cmd) } # this re-enters cmd into refset with :emitted
+              when :emitted
+                # 1.2.2. If the entry is marked as "emitted", then this is also the
+                # occurrences of the same indexed representation. But this time,
+                # we just encode 2 indexed representations.
+                commands << cmd << cmd
+                refset_entry[1] = :emitted
+                # 2.times { process(cmd) } # this re-enters cmd into refset with :emitted
               else
-                # 1.1. If name/value pair is present in the header table, and the
-                # corresponding entry in the header table is NOT in the
-                # reference set, add the entry to the reference set and encode
-                # it as indexed representation. Mark the entry "emitted".
-
-                # Adding cmd may cause table evictions
-                # only when cmd points to an entry in the static table.
-                process(cmd, &on_evict) # Retry when eviction happens
-                commands << cmd
+                # 1.2.3. Otherwise, just mark the entry "common-header" and not
+                # encode it at the moment.
+                refset_entry[1] = :common
               end
             else
-              # 1.3. If name/value pair is not present in the header table,
-              # encoder encodes name/value pair as literal representation.
-              # On eviction or substitution, If the entry to be removed is
-              # in the reference set and marked as "common-header", encode
-              # it as 2 indexed representations before the removal. On
-              # removal, it is removed from the reference set.
+              # 1.1. If name/value pair is present in the header table, and the
+              # corresponding entry in the header table is NOT in the
+              # reference set, add the entry to the reference set and encode
+              # it as indexed representation. Mark the entry "emitted".
 
-              # h is not in the header table.
-              # Adding this to the header table may cause table evictions
+              # Adding cmd may cause table evictions,
+              # only when cmd points to an entry in the static table.
               process(cmd, &on_evict) # Retry when eviction happens
               commands << cmd
             end
-            false # no retries
-          end while again
+          else
+            # 1.3. If name/value pair is not present in the header table,
+            # encoder encodes name/value pair as literal representation.
+            # On eviction or substitution, If the entry to be removed is
+            # in the reference set and marked as "common-header", encode
+            # it as 2 indexed representations before the removal. On
+            # removal, it is removed from the reference set.
+
+            # h is not in the header table.
+            # Adding this to the header table may cause table evictions
+            process(cmd, &on_evict) # Retry when eviction happens
+            commands << cmd
+          end
+          puts "  --after\n  commands = #{commands.inspect};\n    table = #{@table.inspect};\n    refset = #{@refset.inspect}"
         end
 
         # 2. For each entry in the reference set: if the entry is in the
@@ -430,7 +435,7 @@ module HTTP2
       # Indices in the refset is kept in sync.
       #
       # @param cmd [Array] [name, value]
-      # @param block [Block(refset_entry)] called when a refset entry is evicted
+      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Integer] index of thenewly added entry or nil if not added
       def add_to_table(cmd, &block)
         if size_check(cmd, &block)
@@ -446,48 +451,35 @@ module HTTP2
       # remove one or more entries at the end of the header table.
       #
       # @param cmd [Hash]
-      # @param block [Block(refset_entry)] called when a refset entry is evicted
+      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Boolean]
       def size_check(cmd, &block)
         cursize = @table.join.bytesize + @table.size * 32
         cmdsize = cmd.nil? ? 0 : cmd.join.bytesize + 32
 
-        # The addition of a new entry with a size greater than the
-        # SETTINGS_HEADER_TABLE_SIZE limit causes all the entries from the
-        # header table to be dropped and the new entry not to be added to the
-        # header table.  The replacement of an existing entry with a new entry
-        # with a size greater than the SETTINGS_HEADER_TABLE_SIZE has the same
-        # consequences.
-        # TODO: check whether this still holds in HPACK-07
-        if cmdsize > @limit
-          @table.clear
-          if block_given?
-            @refset.dup.each do |r|
-              @refset.delete(r)
-              yield r
-            end
-          end
-          return false
-        end
+        while cursize + cmdsize > @limit do
+          break if @table.empty?
 
-        while (cursize + cmdsize) > @limit do
           last_index = @table.size - 1
           e = @table.pop
+          cursize -= e.join.bytesize + 32
 
           # Whenever an entry is evicted from the header table, any reference to
           # that entry contained by the reference set is removed.
           @refset.each do |r|
             if r.first == last_index
               @refset.delete r
-              yield r if block_given?
+
+              # On compression, refset entry marked as :common should get a chance
+              # to be emitted and revive in refset.
+              yield r, e if block_given?
+
               break
             end
           end
-
-          cursize -= (e.join.bytesize + 32)
         end
 
-        return true
+        return cmdsize <= @limit
       end
     end
 
