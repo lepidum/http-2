@@ -265,7 +265,6 @@ module HTTP2
       #
       # @param headers [Array] [[name, value], ...]
       def encode(headers)
-        puts "\n**** encode #{headers}"
         # Based on Tatsuhiro's algorithm
         # - http://lists.w3.org/Archives/Public/ietf-http-wg/2013JulSep/1135.html
 
@@ -279,21 +278,16 @@ module HTTP2
         unmark
 
         headers.each do |h|
-          puts "----before\ninput = #{h}"
-          puts "  -- trying addcmd: #{h};\n    table = #{@table.inspect};\n    refset = #{@refset.inspect}"
 
           cmd = addcmd(h)
 
           # Retry may happen when eviction of a common header happens
           on_evict = lambda do |r, e|
-            puts "  -- on_evict #{r}, #{e}  while adding cmd = #{cmd}"
             if r.last == :common
-              puts "    -- evicting :common marked refset"
               # When evicting a header table entry that is referred in refset,
               # and marked as :common, the header should be emitted before eviction.
               c = removecmd(r.first)
               commands << c << c
-              puts "  --after evict\n  commands = #{commands.inspect};\n    table = #{@table.inspect};\n    refset = #{@refset.inspect}"
             end
           end
 
@@ -357,7 +351,6 @@ module HTTP2
             process(cmd, &on_evict) # Retry when eviction happens
             commands << cmd
           end
-          puts "  --after\n  commands = #{commands.inspect};\n    table = #{@table.inspect};\n    refset = #{@refset.inspect}"
         end
 
         # 2. For each entry in the reference set: if the entry is in the
