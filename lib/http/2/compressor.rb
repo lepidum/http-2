@@ -516,14 +516,16 @@ module HTTP2
 
     # Predefined options set for Compressor
     # http://mew.org/~kazu/material/2014-hpack.pdf
-    NAIVE   = { index: :never,  refset: :never,  huffman: :never  }.freeze
-    LINEAR  = { index: :all,    refset: :never,  huffman: :never  }.freeze
-    STATIC  = { index: :static, refset: :never,  huffman: :never  }.freeze
-    DIFF    = { index: :all,    refset: :always, huffman: :never  }.freeze
-    NAIVEH  = { index: :never,  refset: :never,  huffman: :always }.freeze
-    LINEARH = { index: :all,    refset: :never,  huffman: :always }.freeze
-    STATICH = { index: :static, refset: :never,  huffman: :always }.freeze
-    DIFFH   = { index: :all,    refset: :always, huffman: :always }.freeze
+    NAIVE    = { index: :never,  refset: :never,   huffman: :never   }.freeze
+    LINEAR   = { index: :all,    refset: :never,   huffman: :never   }.freeze
+    STATIC   = { index: :static, refset: :never,   huffman: :never   }.freeze
+    DIFF     = { index: :all,    refset: :always,  huffman: :never   }.freeze
+    SHORTER  = { index: :all,    refset: :shorter, huffman: :never   }.freeze
+    NAIVEH   = { index: :never,  refset: :never,   huffman: :always  }.freeze
+    LINEARH  = { index: :all,    refset: :never,   huffman: :always  }.freeze
+    STATICH  = { index: :static, refset: :never,   huffman: :always  }.freeze
+    DIFFH    = { index: :all,    refset: :always,  huffman: :always  }.freeze
+    SHORTERH = { index: :all,    refset: :shorter, huffman: :shorter }.freeze
 
     # Responsible for encoding header key-value pairs using HPACK algorithm.
     # Compressor must be initialized with appropriate starting context based
