@@ -6,6 +6,8 @@ module HTTP2
   # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07
   module Header
 
+    BINARY = 'binary'
+
     # The set of components used to encode or decode a header set form an
     # encoding context: an encoding context contains a header table and a
     # reference set - there is one encoding context for each direction.
@@ -88,32 +90,51 @@ module HTTP2
       # [index, flag]
       attr_reader :refset
 
+      # Current encoding options
+      #   :table_size  [Integer]  maximum header table size in bytes
+      #   :huffman     [Symbol]   :always, :never, :shorter
+      #   :index       [Symbol]   :all, :header, :static, :never
+      #   :refset      [Symbol]   :always, :never, :shorter
+      attr_reader :options
+
       # Initializes compression context with appropriate client/server
       # defaults and maximum size of the header table.
       #
       # @param type [Symbol] either :request or :response
       # @param limit [Integer] maximum header table size in bytes
       # @param options [Hash] encoding options
-      #   :table_size       [Integer]  maximum header table size in bytes
-      #   :no_huffman       [Boolean]  do not use Huffman encodings when compressing
-      #   :no_index         [Boolean]  do not use incremental indexing when compressing
-      #   :no_reference_set [Boolean]  do not use reference set when compressing
+      #   :table_size  [Integer]  maximum header table size in bytes
+      #   :huffman     [Symbol]   :always, :never, :shorter
+      #   :index       [Symbol]   :all, :header, :static, :never
+      #   :refset      [Symbol]   :always, :never, :shorter
       def initialize(type, options = {})
+        default_options = {
+          huffman:    :shorter,
+          index:      :all,
+          refset:     :shorter,
+          table_size: 4096,
+        }
+        options = default_options.merge(options)
         @type = type
         @table = []
-        @limit = options[:table_size] || 4096
-        @refset = []
         @options = options
+        @limit = @options[:table_size]
+        @refset = []
       end
 
-      # Predefined options set for ease
-      # http://mew.org/~kazu/material/2014-hpack.pdf
-      Naive   = { no_index: true, no_reference_set: true, no_huffman: true }.freeze
-      NaiveH  = { no_index: true, no_reference_set: true,                  }.freeze
-      Linear  = {                 no_reference_set: true, no_huffman: true }.freeze
-      LinearH = {                 no_reference_set: true,                  }.freeze
-      Diff    = {                                         no_huffman: true }.freeze
-      DiffH   = {                                                          }.freeze
+      # Duplicates current compression context
+      def dup
+        other = EncodingContext.new(@type, @options)
+        t = @table
+        r = @refset
+        l = @limit
+        other.instance_eval {
+          @table = t.dup              # shallow copy
+          @refset = r.map {|x| x.dup} # deep copy (depth 2)
+          @limit = l
+        }
+        other
+      end
 
       # Finds an entry in current header table by index.
       # Note that index is zero-based in this module.
@@ -138,6 +159,7 @@ module HTTP2
         end
       end
 
+      # Unmarks entries in refset for next compression/decompression
       def unmark
         @refset.each {|r| r[1] = nil}
       end
@@ -146,8 +168,9 @@ module HTTP2
       # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.2.1
       #
       # @param cmd [Hash] { type:, name:, value:, index: }
+      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Hash] emitted header
-      def process(cmd)
+      def process(cmd, &block)
         emit = nil
 
         case cmd[:type]
@@ -187,7 +210,7 @@ module HTTP2
               #    *  A reference to this new header table entry is added to the
               #       reference set, except if this new entry didn't fit in the
               #       header table.
-              idx = add_to_table(emit)
+              idx = add_to_table(emit, &block)
               idx and @refset.push [idx, :emitted]
             else
               # o  If referencing an element of the header table:
@@ -199,7 +222,7 @@ module HTTP2
             end
           end
 
-        else
+        when :incremental, :noindex, :neverindexed
           # A literal representation that is not added to the header table
           # entails the following action:
           #  - The header is emitted.
@@ -214,6 +237,7 @@ module HTTP2
           if cmd[:name].is_a? Integer
             k, v, _ = dereference(cmd[:name])
 
+            cmd = cmd.dup
             cmd[:index] ||= cmd[:name]
             cmd[:value] ||= v
             cmd[:name] = k
@@ -222,43 +246,206 @@ module HTTP2
           emit = [cmd[:name], cmd[:value]]
 
           if cmd[:type] == :incremental
-            idx = add_to_table(emit)
+            idx = add_to_table(emit, &block)
             idx and @refset.push [idx, :emitted]
           end
+
+        else
+          raise CompressionError.new("Invalid type: #{cmd[:type]}")
         end
 
         emit
       end
 
-      # Emits best available command to encode provided header.
+      # Emit headers without using refset.
       #
-      # @param header [Hash]
-      def addcmd(header)
-        # check if we have an exact match in header table
-        if idx = @table.index(header)
-          if !active? idx
-            return { name: idx, type: :indexed }
+      # @param headers [Array] [[name, value], ...]
+      def encode_simple(headers)
+        commands = []
+        noindex = [:static, :never].include?(@options[:index])
+        unless @refset.empty?
+          commands << refsetemptycmd
+          @refset.clear
+        end
+        headers.each do |h|
+          cmd = addcmd(h)
+          noindex && cmd[:type] == :incremental and cmd[:type] = :noindex
+          commands << cmd
+          process(cmd)
+        end
+        commands
+      end
+
+      # Plan header compression with refset differentiation
+      #
+      # @param headers [Array] [[name, value], ...]
+      def encode_refset_diff(headers)
+        # Based on Tatsuhiro's algorithm
+        # - http://lists.w3.org/Archives/Public/ietf-http-wg/2013JulSep/1135.html
+
+        commands = []
+        unmark
+
+        headers.each do |h|
+          cmd = addcmd(h)
+
+          on_evict = lambda do |r, e|
+            if r.last == :common
+              # When evicting a header table entry that is referred in refset,
+              # and marked as :common, the header should be emitted before eviction.
+              c = removecmd(r.first)
+              commands << c << c
+            end
+          end
+
+          case cmd[:type]
+          when :indexed
+            refset_entry = @refset.find {|r| r.first == cmd[:name]}
+            if refset_entry
+              # 1.2. If name/value pair is present in the header table, and the
+              # corresponding entry in the header table is in the reference
+              # set:
+
+              # We can assume refset_entry points to an entry
+              # in header table, not static.
+              # This cmd is already in the header table,
+              # therefore does not cause any table eviction.
+              case refset_entry.last
+              when :common
+                # 1.2.1. If the entry is marked as "common-header", then this is
+                # the 2nd occurrence of the same indexed representation. To
+                # encode this name/value pair, we have to encode 4 indexed
+                # representation. 2 for the 1st one (which was the
+                # name/value pair processed in 1.2.3.), and the another 2
+                # for the current name/value pair.  Unmark the
+                # entry "common-header" and mark it "emitted".
+                commands << cmd << cmd << cmd << cmd
+                refset_entry[1] = :emitted
+              when :emitted
+                # 1.2.2. If the entry is marked as "emitted", then this is also the
+                # occurrences of the same indexed representation. But this time,
+                # we just encode 2 indexed representations.
+                commands << cmd << cmd
+                refset_entry[1] = :emitted
+              else
+                # 1.2.3. Otherwise, just mark the entry "common-header" and not
+                # encode it at the moment.
+                refset_entry[1] = :common
+              end
+            else
+              # 1.1. If name/value pair is present in the header table, and the
+              # corresponding entry in the header table is NOT in the
+              # reference set, add the entry to the reference set and encode
+              # it as indexed representation. Mark the entry "emitted".
+
+              # Adding cmd may cause table evictions,
+              # only when cmd points to an entry in the static table.
+              process(cmd, &on_evict) # Retry when eviction happens
+              commands << cmd
+            end
+          else
+            # 1.3. If name/value pair is not present in the header table,
+            # encoder encodes name/value pair as literal representation.
+            # On eviction or substitution, If the entry to be removed is
+            # in the reference set and marked as "common-header", encode
+            # it as 2 indexed representations before the removal. On
+            # removal, it is removed from the reference set.
+
+            # h is not in the header table.
+            # Adding this to the header table may cause table evictions
+            process(cmd, &on_evict) # Retry when eviction happens
+            commands << cmd
           end
         end
 
-        # check if we have a partial match on header name
-        if idx = @table.index {|(k,_)| k == header.first}
-          # default to incremental indexing
-          cmd = { name: idx, value: header.last, type: :incremental}
-
-          # TODO: implement literal without indexing strategy
-
-          return cmd
+        # 2. For each entry in the reference set: if the entry is in the
+        # reference set but is neither marked as "emitted"
+        # nor "common-header", remove it from the reference set and
+        # encode its index as indexed representation.
+        @refset.find_all {|(_,mark)| !mark}.each do |(idx,_)|
+          cmd = removecmd(idx)
+          commands << cmd
+          process(cmd)
         end
 
-        return { name: header.first, value: header.last, type: :incremental }
+        commands
       end
 
-      # Emits command to remove current index from working set.
+      # Plan header compression.
+      #
+      # @param headers [Array] [[name, value], ...]
+      def encode(headers)
+        case @options[:refset]
+        when :never
+          # Simple implementation (without refset)
+          encode_simple(headers)
+        when :always
+          # Refset differentiation
+          encode_refset_diff(headers)
+        else
+          # Try starting from empty refset with current header table
+          cc1 = self.dup
+          commands1 = cc1.encode_refset_diff(headers)
+          cc2 = self.dup
+          cc2.refset.clear
+          commands2 = [refsetemptycmd] + cc2.encode_refset_diff(headers)
+          # TODO: Consider comparing encoded bytecount instead of number of commands.
+          #   Or prove it's OK to use number of commands.
+          commands = commands1.size < commands2.size ? commands1 : commands2
+          commands.each {|cmd| process(cmd)}
+          commands
+        end
+      end
+
+      # Emits command for a header.
+      # Prefer header table over static table.
+      # Prefer exact match over name-only match.
+      #
+      # @param header [Hash]
+      def addcmd(header)
+        # TODO: implement literal without indexing strategy
+
+        exact = nil
+        name_only = nil
+
+        if [:all, :header].include?(@options[:index])
+          @table.each_index do |i|
+            if @table[i] == header
+              exact ||= i
+            elsif @table[i].first == header.first
+              name_only ||= i
+            end
+          end
+        end
+        if [:all, :static].include?(@options[:index])
+          STATIC_TABLE.each_index do |i|
+            if STATIC_TABLE[i] == header
+              exact ||= i + @table.size
+            elsif STATIC_TABLE[i].first == header.first
+              name_only ||= i + @table.size
+            end
+          end
+        end
+
+        if exact
+          { name: exact, type: :indexed }
+        elsif name_only
+          { name: name_only, value: header.last, type: :incremental }
+        else
+          { name: header.first, value: header.last, type: :incremental }
+        end
+      end
+
+      # Emits command to remove current index from refset.
       #
       # @param idx [Integer]
       def removecmd(idx)
         {name: idx, type: :indexed}
+      end
+
+      # Emits command to clear the current refset
+      def refsetemptycmd
+        { type: :refsetempty }
       end
 
       private
@@ -269,11 +456,12 @@ module HTTP2
       # Indices in the refset is kept in sync.
       #
       # @param cmd [Array] [name, value]
+      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Integer] index of thenewly added entry or nil if not added
-      def add_to_table(cmd)
-        if size_check(cmd)
+      def add_to_table(cmd, &block)
+        if size_check(cmd, &block)
           @table.unshift(cmd)
-          @refset.each_index {|i| @refset[i][0] += 1}
+          @refset.each_index {|i| @refset[i][0]+= 1}
           0
         else
           nil
@@ -284,40 +472,35 @@ module HTTP2
       # remove one or more entries at the end of the header table.
       #
       # @param cmd [Hash]
+      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Boolean]
-      def size_check(cmd)
+      def size_check(cmd, &block)
         cursize = @table.join.bytesize + @table.size * 32
         cmdsize = cmd.nil? ? 0 : cmd.join.bytesize + 32
 
-        # The addition of a new entry with a size greater than the
-        # SETTINGS_HEADER_TABLE_SIZE limit causes all the entries from the
-        # header table to be dropped and the new entry not to be added to the
-        # header table.  The replacement of an existing entry with a new entry
-        # with a size greater than the SETTINGS_HEADER_TABLE_SIZE has the same
-        # consequences.
-        # TODO: check whether this still holds in HPACK-07
-        if cmdsize > @limit
-          @table.clear
-          return false
-        end
+        while cursize + cmdsize > @limit do
+          break if @table.empty?
 
-        cur = 0
-        while (cursize + cmdsize) > @limit do
           last_index = @table.size - 1
           e = @table.pop
+          cursize -= e.join.bytesize + 32
 
           # Whenever an entry is evicted from the header table, any reference to
           # that entry contained by the reference set is removed.
-          @refset.delete_if {|i,_| i == last_index }
+          @refset.each do |r|
+            if r.first == last_index
+              @refset.delete r
 
-          cursize -= (e.join.bytesize + 32)
+              # On compression, refset entry marked as :common should get a chance
+              # to be emitted and revive in refset.
+              yield r, e if block_given?
+
+              break
+            end
+          end
         end
 
-        return true
-      end
-
-      def active?(idx)
-        !@refset.find {|i,_| i == idx }.nil?
+        return cmdsize <= @limit
       end
     end
 
@@ -331,6 +514,17 @@ module HTTP2
       changetablesize: {prefix: 4, pattern: 0x20},
     }
 
+    # Predefined options set for Compressor
+    # http://mew.org/~kazu/material/2014-hpack.pdf
+    NAIVE   = { index: :never,  refset: :never,  huffman: :never  }.freeze
+    LINEAR  = { index: :all,    refset: :never,  huffman: :never  }.freeze
+    STATIC  = { index: :static, refset: :never,  huffman: :never  }.freeze
+    DIFF    = { index: :all,    refset: :always, huffman: :never  }.freeze
+    NAIVEH  = { index: :never,  refset: :never,  huffman: :always }.freeze
+    LINEARH = { index: :all,    refset: :never,  huffman: :always }.freeze
+    STATICH = { index: :static, refset: :never,  huffman: :always }.freeze
+    DIFFH   = { index: :all,    refset: :always, huffman: :always }.freeze
+
     # Responsible for encoding header key-value pairs using HPACK algorithm.
     # Compressor must be initialized with appropriate starting context based
     # on local role: client or server.
@@ -338,11 +532,11 @@ module HTTP2
     # @example
     #   client_role = Compressor.new(:request)
     #   server_role = Compressor.new(:response)
-    # @param type [Symbol] either :request or :response
     class Compressor
+      # @param type [Symbol] either :request or :response
+      # @param options [Hash] encoding options
       def initialize(type, options = {})
         @cc = EncodingContext.new(type, options)
-        @options = options
       end
 
       # Encodes provided value via integer representation.
@@ -393,13 +587,22 @@ module HTTP2
       # @param str [String]
       # @return [String] binary string
       def string(str)
-        if @options[:no_huffman]
-          integer(str.bytesize, 7) << str.dup.force_encoding('binary')
-        else
+        plain, huffman = nil, nil
+        unless @cc.options[:huffman] == :always
+          plain = integer(str.bytesize, 7) << str.dup.force_encoding(BINARY)
+        end
+        unless @cc.options[:huffman] == :never
           huffman = Huffman.new.encode(str)
-          bytes = integer(huffman.bytesize, 7) << huffman
-          bytes.setbyte(0, bytes[0].unpack("C").first | 0x80)
-          bytes
+          huffman = integer(huffman.bytesize, 7) << huffman
+          huffman.setbyte(0, huffman.ord | 0x80)
+        end
+        case @cc.options[:huffman]
+        when :always
+          huffman
+        when :never
+          plain
+        else
+          huffman.bytesize < plain.bytesize ? huffman : plain
         end
       end
 
@@ -430,7 +633,7 @@ module HTTP2
         end
 
         # set header representation pattern on first byte
-        fb = buffer[0].unpack("C").first | rep[:pattern]
+        fb = buffer.ord | rep[:pattern]
         buffer.setbyte(0, fb)
 
         buffer
@@ -442,45 +645,14 @@ module HTTP2
       # @return [Buffer]
       def encode(headers)
         buffer = Buffer.new
-        commands = []
 
         # Literal header names MUST be translated to lowercase before
         # encoding and transmission.
         headers.map! {|(hk,hv)| [hk.downcase, hv] }
 
-        if @options[:no_reference_set]
-          # Debugging mode.  Do not use refset at all.
-          unless @cc.refset.empty?
-            commands.push(type: :changetablesize)
-          end
-          headers.each do |(hk,hv)|
-            cmd = @cc.addcmd [hk, hv]
-            if cmd[:type] == :incremental
-              cmd[:type] = :noindex
-            end
-            commands.push cmd
-          end
-        else
-          # Reference set differenciating
-
-          # Generate remove commands for missing headers
-          @cc.refset.each do |idx, (wk,wv)|
-            if headers.find {|(hk,hv)| hk == wk && hv == wv }.nil?
-              commands.push @cc.removecmd idx
-            end
-          end
-
-          # Generate add commands for new headers
-          headers.each do |(hk,hv)|
-            if @cc.refset.find {|i,(wk,wv)| hk == wk && hv == wv}.nil?
-              commands.push @cc.addcmd [hk, hv]
-            end
-          end
-
-        end
-
+        # TODO: preprocess multi-valued headers
+        commands = @cc.encode(headers)
         commands.each do |cmd|
-          @cc.process cmd.dup
           buffer << header(cmd)
         end
 
@@ -526,8 +698,10 @@ module HTTP2
       def string(buf)
         huffman = (buf.readbyte(0) & 0x80) == 0x80
         len = integer(buf, 7)
-        str = buf.read(len).force_encoding('utf-8')
-        huffman and str = Huffman.new.decode(Buffer.new(str)).force_encoding('utf-8')
+        str = buf.read(len)
+        str.bytesize == len or raise CompressionError.new("string too short")
+        huffman and str = Huffman.new.decode(Buffer.new(str))
+        str = str.force_encoding('utf-8')
         str
       end
 
@@ -588,6 +762,8 @@ module HTTP2
         @cc.refset.each do |i,mark|
           mark == :emitted or set << @cc.table[i]
         end
+
+        # TODO: postprocess multi-valued headers
 
         set.compact
       end
