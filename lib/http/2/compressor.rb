@@ -122,6 +122,20 @@ module HTTP2
         @refset = []
       end
 
+      # Duplicates current compression context
+      def dup
+        other = EncodingContext.new(@type, @options)
+        t = @table
+        r = @refset
+        l = @limit
+        other.instance_eval {
+          @table = t.dup              # shallow copy
+          @refset = r.map {|x| x.dup} # deep copy (depth 2)
+          @limit = l
+        }
+        other
+      end
+
       # Finds an entry in current header table by index.
       # Note that index is zero-based in this module.
       #
@@ -145,6 +159,7 @@ module HTTP2
         end
       end
 
+      # Unmarks entries in refset for next compression/decompression
       def unmark
         @refset.each {|r| r[1] = nil}
       end
@@ -249,7 +264,7 @@ module HTTP2
         commands = []
         noindex = [:static, :never].include?(@options[:index])
         unless @refset.empty?
-          commands << { type: :refsetempty }
+          commands << refsetemptycmd
           @refset.clear
         end
         headers.each do |h|
@@ -261,27 +276,19 @@ module HTTP2
         commands
       end
 
-      # Plan header compression.
+      # Plan header compression with refset differentiation
       #
       # @param headers [Array] [[name, value], ...]
-      def encode(headers)
+      def encode_refset_diff(headers)
         # Based on Tatsuhiro's algorithm
         # - http://lists.w3.org/Archives/Public/ietf-http-wg/2013JulSep/1135.html
 
-        # Simple implementation prefered
-        if @options[:refset] == :never
-          return encode_simple(headers)
-        end
-
-        # TODO: implement :shorter plan
         commands = []
         unmark
 
         headers.each do |h|
-
           cmd = addcmd(h)
 
-          # Retry may happen when eviction of a common header happens
           on_evict = lambda do |r, e|
             if r.last == :common
               # When evicting a header table entry that is referred in refset,
@@ -314,14 +321,12 @@ module HTTP2
                 # entry "common-header" and mark it "emitted".
                 commands << cmd << cmd << cmd << cmd
                 refset_entry[1] = :emitted
-                # 4.times { process(cmd) } # this re-enters cmd into refset with :emitted
               when :emitted
                 # 1.2.2. If the entry is marked as "emitted", then this is also the
                 # occurrences of the same indexed representation. But this time,
                 # we just encode 2 indexed representations.
                 commands << cmd << cmd
                 refset_entry[1] = :emitted
-                # 2.times { process(cmd) } # this re-enters cmd into refset with :emitted
               else
                 # 1.2.3. Otherwise, just mark the entry "common-header" and not
                 # encode it at the moment.
@@ -364,6 +369,32 @@ module HTTP2
         end
 
         commands
+      end
+
+      # Plan header compression.
+      #
+      # @param headers [Array] [[name, value], ...]
+      def encode(headers)
+        case @options[:refset]
+        when :never
+          # Simple implementation (without refset)
+          encode_simple(headers)
+        when :always
+          # Refset differentiation
+          encode_refset_diff(headers)
+        else
+          # Try starting from empty refset with current header table
+          cc1 = self.dup
+          commands1 = cc1.encode_refset_diff(headers)
+          cc2 = self.dup
+          cc2.refset.clear
+          commands2 = [refsetemptycmd] + cc2.encode_refset_diff(headers)
+          # TODO: Consider comparing encoded bytecount instead of number of commands.
+          #   Or prove it's OK to use number of commands.
+          commands = commands1.size < commands2.size ? commands1 : commands2
+          commands.each {|cmd| process(cmd)}
+          commands
+        end
       end
 
       # Emits command for a header.
@@ -412,12 +443,9 @@ module HTTP2
         {name: idx, type: :indexed}
       end
 
-      # Emits command to reinsert current index to refset.
-      #
-      # @param idx [Integer]
-      def reinsert(idx)
-        [ {name: idx, type: :indexed},
-          {name: idx, type: :indexed} ]
+      # Emits command to clear the current refset
+      def refsetemptycmd
+        { type: :refsetempty }
       end
 
       private

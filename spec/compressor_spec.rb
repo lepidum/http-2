@@ -279,6 +279,7 @@ describe HTTP2::Header do
       type: :request,
       table_size: 4096,
       huffman: :never,
+      refset: :shorter,
       streams: [
         { wire: "8287 8644 0f77 7777 2e65 7861 6d70 6c65
                    2e63 6f6d",
@@ -340,6 +341,7 @@ describe HTTP2::Header do
       type: :request,
       table_size: 4096,
       huffman: :always,
+      refset: :shorter,
       streams: [
         { wire: "8287 8644 8ce7 cf9b ebe8 9b6f b16f a9b6 ff",
           emitted: [
@@ -400,6 +402,7 @@ describe HTTP2::Header do
       type: :response,
       table_size: 256,
       huffman: :never,
+      refset: :always,
       streams: [
         { wire: "4803 3330 3259 0770 7269 7661 7465 631d
                    4d6f 6e2c 2032 3120 4f63 7420 3230 3133
@@ -463,6 +466,7 @@ describe HTTP2::Header do
       type: :response,
       table_size: 256,
       huffman: :always,
+      refset: :always,
       streams: [
         { wire: "4882 4017 5985 bf06 724b 9763 93d6 dbb2
                    9884 de2a 7188 0506 2098 5131 09b5 6ba3
@@ -564,7 +568,8 @@ describe HTTP2::Header do
           context "request #{nth+1}" do
             before { @cc = Compressor.new(ex[:type],
                                           table_size: ex[:table_size],
-                                          huffman: ex[:huffman]) }
+                                          huffman: ex[:huffman],
+                                          refset: ex[:refset]) }
             before do
               (0...nth).each do |i|
                 @cc.encode(ex[:streams][i][:emitted])
