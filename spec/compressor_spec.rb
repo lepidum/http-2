@@ -33,24 +33,37 @@ describe HTTP2::Header do
     end
 
     context "string" do
-      [ ['with huffman',    {}, 0x80 ],
-        ['without huffman', {:no_huffman => true}, 0] ].each do |desc, options, msb|
+      [ ['with huffman',    :always, 0x80 ],
+        ['without huffman', :never,  0] ].each do |desc, option, msb|
         let (:trailer) { "trailer" }
 
         [
           ['ascii codepoints', 'abcdefghij'],
           ['utf-8 codepoints', 'éáűőúöüó€'],
           ['long utf-8 strings', 'éáűőúöüó€'*100],
-          ].each do |datatype, plain|
+        ].each do |datatype, plain|
           it "should handle #{datatype} #{desc}" do
-            @c = Compressor.new(:request, options)
-
+            # NOTE: don't put this new in before{} because of test case shuffling
+            @c = Compressor.new(:request, huffman: option)
             str = @c.string(plain)
             (str.getbyte(0) & 0x80).should eq msb
 
             buf = Buffer.new(str + trailer)
             d.string(buf).should eq plain
             buf.should eq trailer
+          end
+        end
+      end
+      context "choosing shorter representation" do
+        [ ['日本語', :plain],
+          ['200', :huffman],
+          ['xq', :plain],   # prefer plain if equal size
+        ].each do |string, choice|
+          before { @c = Compressor.new(:request, huffman: :shorter) }
+
+          it "should return #{choice} representation" do
+            wire = @c.string(string)
+            (wire.getbyte(0) & 0x80).should eq (choice == :plain ? 0 : 0x80)
           end
         end
       end

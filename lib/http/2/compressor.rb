@@ -88,32 +88,37 @@ module HTTP2
       # [index, flag]
       attr_reader :refset
 
+      # Current encoding options
+      #   :table_size  [Integer]  maximum header table size in bytes
+      #   :huffman     [Symbol]   :always, :never, :shorter
+      #   :index       [Symbol]   :all, :header, :static, :never
+      #   :refset      [Symbol]   :on, :off
+      attr_reader :options
+
       # Initializes compression context with appropriate client/server
       # defaults and maximum size of the header table.
       #
       # @param type [Symbol] either :request or :response
       # @param limit [Integer] maximum header table size in bytes
       # @param options [Hash] encoding options
-      #   :table_size       [Integer]  maximum header table size in bytes
-      #   :no_huffman       [Boolean]  do not use Huffman encodings when compressing
-      #   :no_index         [Boolean]  do not use incremental indexing when compressing
-      #   :no_reference_set [Boolean]  do not use reference set when compressing
+      #   :table_size  [Integer]  maximum header table size in bytes
+      #   :huffman     [Symbol]   :always, :never, :shorter
+      #   :index       [Symbol]   :all, :header, :static, :never
+      #   :refset      [Symbol]   :on, :off
       def initialize(type, options = {})
+        default_options = {
+          huffman:    :shorter,
+          index:      :all,
+          refset:     :on,
+          table_size: 4096,
+        }
+        options = default_options.merge(options)
         @type = type
         @table = []
-        @limit = options[:table_size] || 4096
-        @refset = []
         @options = options
+        @limit = @options[:table_size]
+        @refset = []
       end
-
-      # Predefined options set for ease
-      # http://mew.org/~kazu/material/2014-hpack.pdf
-      Naive   = { no_index: true, no_reference_set: true, no_huffman: true }.freeze
-      NaiveH  = { no_index: true, no_reference_set: true,                  }.freeze
-      Linear  = {                 no_reference_set: true, no_huffman: true }.freeze
-      LinearH = {                 no_reference_set: true,                  }.freeze
-      Diff    = {                                         no_huffman: true }.freeze
-      DiffH   = {                                                          }.freeze
 
       # Finds an entry in current header table by index.
       # Note that index is zero-based in this module.
@@ -232,6 +237,9 @@ module HTTP2
 
       # Emits best available command to encode provided header.
       #
+      # Prefer header table over static table.
+      # Prefer exact match over name-only match.
+      #
       # @param header [Hash]
       def addcmd(header)
         # check if we have an exact match in header table
@@ -298,6 +306,7 @@ module HTTP2
         # TODO: check whether this still holds in HPACK-07
         if cmdsize > @limit
           @table.clear
+          @refset.clear
           return false
         end
 
@@ -331,6 +340,17 @@ module HTTP2
       changetablesize: {prefix: 4, pattern: 0x20},
     }
 
+    # Predefined options set for Compressor
+    # http://mew.org/~kazu/material/2014-hpack.pdf
+    NAIVE   = { index: :never,  refset: :off, huffman: :never  }.freeze
+    LINEAR  = { index: :all,    refset: :off, huffman: :never  }.freeze
+    STATIC  = { index: :static, refset: :off, huffman: :never  }.freeze
+    DIFF    = { index: :all,    refset: :on,  huffman: :never  }.freeze
+    NAIVEH  = { index: :never,  refset: :off, huffman: :always }.freeze
+    LINEARH = { index: :all,    refset: :off, huffman: :always }.freeze
+    STATICH = { index: :static, refset: :off, huffman: :always }.freeze
+    DIFFH   = { index: :all,    refset: :on,  huffman: :always }.freeze
+
     # Responsible for encoding header key-value pairs using HPACK algorithm.
     # Compressor must be initialized with appropriate starting context based
     # on local role: client or server.
@@ -338,11 +358,11 @@ module HTTP2
     # @example
     #   client_role = Compressor.new(:request)
     #   server_role = Compressor.new(:response)
-    # @param type [Symbol] either :request or :response
     class Compressor
+      # @param type [Symbol] either :request or :response
+      # @param options [Hash] encoding options
       def initialize(type, options = {})
         @cc = EncodingContext.new(type, options)
-        @options = options
       end
 
       # Encodes provided value via integer representation.
@@ -393,13 +413,22 @@ module HTTP2
       # @param str [String]
       # @return [String] binary string
       def string(str)
-        if @options[:no_huffman]
-          integer(str.bytesize, 7) << str.dup.force_encoding('binary')
-        else
+        plain, huffman = nil, nil
+        unless @cc.options[:huffman] == :always
+          plain = integer(str.bytesize, 7) << str.dup.force_encoding('binary')
+        end
+        unless @cc.options[:huffman] == :never
           huffman = Huffman.new.encode(str)
-          bytes = integer(huffman.bytesize, 7) << huffman
-          bytes.setbyte(0, bytes[0].unpack("C").first | 0x80)
-          bytes
+          huffman = integer(huffman.bytesize, 7) << huffman
+          huffman.setbyte(0, huffman.ord | 0x80)
+        end
+        case @cc.options[:huffman]
+        when :always
+          huffman
+        when :never
+          plain
+        else
+          huffman.bytesize < plain.bytesize ? huffman : plain
         end
       end
 
@@ -430,7 +459,7 @@ module HTTP2
         end
 
         # set header representation pattern on first byte
-        fb = buffer[0].unpack("C").first | rep[:pattern]
+        fb = buffer.ord | rep[:pattern]
         buffer.setbyte(0, fb)
 
         buffer
@@ -448,7 +477,7 @@ module HTTP2
         # encoding and transmission.
         headers.map! {|(hk,hv)| [hk.downcase, hv] }
 
-        if @options[:no_reference_set]
+        if @cc.options[:no_reference_set]
           # Debugging mode.  Do not use refset at all.
           unless @cc.refset.empty?
             commands.push(type: :changetablesize)
