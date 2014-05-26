@@ -13,6 +13,7 @@ describe HTTP2::Header do
     haskell-http2-static
     haskell-http2-static-huffman
     nghttp2
+    nghttp2-change-table-size
     node-http2-hpack
   ]
 
