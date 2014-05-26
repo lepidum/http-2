@@ -15,8 +15,7 @@ module HTTP2
     class EncodingContext
       include Error
 
-      # TODO: replace StringIO with Buffer...
-
+      # @private
       # Static table
       # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#appendix-B
       STATIC_TABLE = [
@@ -91,10 +90,11 @@ module HTTP2
       attr_reader :refset
 
       # Current encoding options
-      #   :table_size  [Integer]  maximum header table size in bytes
-      #   :huffman     [Symbol]   :always, :never, :shorter
-      #   :index       [Symbol]   :all, :header, :static, :never
-      #   :refset      [Symbol]   :always, :never, :shorter
+      #
+      #   :table_size  Integer  maximum header table size in bytes
+      #   :huffman     Symbol   :always, :never, :shorter
+      #   :index       Symbol   :all, :static, :never
+      #   :refset      Symbol   :always, :never, :shorter
       attr_reader :options
 
       # Initializes compression context with appropriate client/server
@@ -103,10 +103,6 @@ module HTTP2
       # @param type [Symbol] either :request or :response
       # @param limit [Integer] maximum header table size in bytes
       # @param options [Hash] encoding options
-      #   :table_size  [Integer]  maximum header table size in bytes
-      #   :huffman     [Symbol]   :always, :never, :shorter
-      #   :index       [Symbol]   :all, :header, :static, :never
-      #   :refset      [Symbol]   :always, :never, :shorter
       def initialize(type, options = {})
         default_options = {
           huffman:    :shorter,
@@ -123,6 +119,7 @@ module HTTP2
       end
 
       # Duplicates current compression context
+      # @return [EncodingContext]
       def dup
         other = EncodingContext.new(@type, @options)
         t = @table
@@ -145,7 +142,7 @@ module HTTP2
       # If the index is greater than the last static index, an error is raised.
       #
       # @param index [Integer] zero-based index in the header table.
-      # @return [Array] [key, value, static?]
+      # @return [Array] +[key, value, static?]+
       def dereference(index)
         if index >= @table.size
           index -= @table.size
@@ -168,7 +165,7 @@ module HTTP2
       # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.2.1
       #
       # @param cmd [Hash] { type:, name:, value:, index: }
-      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
+      # @yield [refset_entry, table_entry] called when a refset entry is evicted
       # @return [Hash] emitted header
       def process(cmd, &block)
         emit = nil
@@ -259,7 +256,8 @@ module HTTP2
 
       # Emit headers without using refset.
       #
-      # @param headers [Array] [[name, value], ...]
+      # @param headers [Array] +[[name, value], ...]+
+      # @return [Array] array of commands
       def encode_simple(headers)
         commands = []
         noindex = [:static, :never].include?(@options[:index])
@@ -278,7 +276,8 @@ module HTTP2
 
       # Plan header compression with refset differentiation
       #
-      # @param headers [Array] [[name, value], ...]
+      # @param headers [Array] +[[name, value], ...]+
+      # @return [Array] array of commands
       def encode_refset_diff(headers)
         # Based on Tatsuhiro's algorithm
         # - http://lists.w3.org/Archives/Public/ietf-http-wg/2013JulSep/1135.html
@@ -371,9 +370,13 @@ module HTTP2
         commands
       end
 
-      # Plan header compression.
+      # Plan header compression according to +@options [:refset]+
+      #  :never   use encode_simple
+      #  :always  use encode_refset_diff
+      #  :shorter encode_refset_diff with or without refset emptying
       #
-      # @param headers [Array] [[name, value], ...]
+      # @param headers [Array] +[[name, value], ...]+
+      # @return [Array] array of commands
       def encode(headers)
         case @options[:refset]
         when :never
@@ -401,14 +404,21 @@ module HTTP2
       # Prefer header table over static table.
       # Prefer exact match over name-only match.
       #
-      # @param header [Hash]
+      # +@options [:index]+ controls whether to use the header table,
+      # static table, or both.
+      #  :never   Do not use header table or static table reference at all.
+      #  :static  Use static table only.
+      #  :all     Use all of them.
+      #
+      # @param header [Array] +[name, value]+
+      # @return [Hash] command
       def addcmd(header)
         # TODO: implement literal without indexing strategy
 
         exact = nil
         name_only = nil
 
-        if [:all, :header].include?(@options[:index])
+        if [:all].include?(@options[:index])
           @table.each_index do |i|
             if @table[i] == header
               exact ||= i
@@ -439,11 +449,14 @@ module HTTP2
       # Emits command to remove current index from refset.
       #
       # @param idx [Integer]
+      # @return [Hash] command
       def removecmd(idx)
         {name: idx, type: :indexed}
       end
 
       # Emits command to clear the current refset
+      #
+      # @return [Hash] command
       def refsetemptycmd
         { type: :refsetempty }
       end
@@ -456,7 +469,7 @@ module HTTP2
       # Indices in the refset is kept in sync.
       #
       # @param cmd [Array] [name, value]
-      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
+      # @yield [refset_entry, table_entry] called when a refset entry is evicted
       # @return [Integer] index of thenewly added entry or nil if not added
       def add_to_table(cmd, &block)
         if size_check(cmd, &block)
@@ -469,6 +482,7 @@ module HTTP2
       end
 
       # Returns current table size in octets
+      # @return [Integer]
       def current_table_size
         @table.join.bytesize + @table.size * 32
       end
@@ -477,8 +491,8 @@ module HTTP2
       # remove one or more entries at the end of the header table.
       #
       # @param cmd [Hash]
-      # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
-      # @return [Boolean]
+      # @yield [refset_entry, table_entry] called when a refset entry is evicted
+      # @return [Boolean] whether +cmd+ fits in the header table.
       def size_check(cmd, &block)
         cursize = current_table_size
         cmdsize = cmd.nil? ? 0 : cmd.join.bytesize + 32
@@ -591,6 +605,11 @@ module HTTP2
       # * If the bit 7 of the first byte is 0, the string value is
       #   represented as a list of UTF-8 encoded octets.
       #
+      # +@options [:huffman]+ controls whether to use Huffman encoding:
+      #  :never   Do not use Huffman encoding
+      #  :always  Always use Huffman encoding
+      #  :shorter Use Huffman when the result is strictly shorter
+      #
       # @param str [String]
       # @return [String] binary string
       def string(str)
@@ -618,6 +637,7 @@ module HTTP2
       #
       # @param h [Hash] header command
       # @param buffer [String]
+      # @return [Buffer]
       def header(h, buffer = Buffer.new)
         rep = HEADREP[h[:type]]
 
@@ -657,7 +677,8 @@ module HTTP2
         # encoding and transmission.
         headers.map! {|(hk,hv)| [hk.downcase, hv] }
 
-        # TODO: preprocess multi-valued headers
+        # NOTE: preprocessing of multi-valued headers should be
+        #  taken care of at the Stream layer.
         commands = @cc.encode(headers)
         commands.each do |cmd|
           buffer << header(cmd)
@@ -675,6 +696,8 @@ module HTTP2
     #   server_role = Decompressor.new(:request)
     #   client_role = Decompressor.new(:response)
     class Decompressor
+      # @param type [Symbol] either :request or :response
+      # @param options [Hash] decoding options.  Only :table_size is effective.
       def initialize(type, options = {})
         @cc = EncodingContext.new(type, options)
       end
@@ -683,6 +706,7 @@ module HTTP2
       #
       # @param buf [String]
       # @param n [Integer] number of available bits
+      # @return [Integer]
       def integer(buf, n)
         limit = 2**n - 1
         i = !n.zero? ? (buf.getbyte & limit) : 0
@@ -702,6 +726,7 @@ module HTTP2
       #
       # @param buf [String]
       # @return [String] UTF-8 encoded string
+      # @raise [CompressionError] when input is malformed
       def string(buf)
         huffman = (buf.readbyte(0) & 0x80) == 0x80
         len = integer(buf, 7)
@@ -715,6 +740,7 @@ module HTTP2
       # Decodes header command from provided buffer.
       #
       # @param buf [Buffer]
+      # @return [Hash] command
       def header(buf)
         peek = buf.readbyte(0)
 
@@ -769,8 +795,6 @@ module HTTP2
         @cc.refset.each do |i,mark|
           mark == :emitted or set << @cc.table[i]
         end
-
-        # TODO: postprocess multi-valued headers
 
         set.compact
       end

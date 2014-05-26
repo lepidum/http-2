@@ -48,6 +48,11 @@ describe HTTP2::Header::Huffman do
       encoded = [encoded].pack("H*")
       expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS invalid/)
     end
+    it "should raise when exceedingly padded" do
+      plain, encoded = ["www.example.com", "e7cf9bebe89b6fb16fa9b6ffff"] # note the extra ff
+      encoded = [encoded].pack("H*")
+      expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS invalid/)
+    end
     it "should raise when EOS is explicitly encoded" do
       encoded = ["4efffffee7"].pack("H*") # a b EOS
       expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS found/)

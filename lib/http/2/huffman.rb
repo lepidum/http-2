@@ -23,9 +23,13 @@ module HTTP2
       def encode(str)
         str = str.dup.force_encoding(BINARY)
         index = 0
-        emit = ''
-        buffer = 0
-        bits_in_buffer = 0
+        emit = ''              # partial octet results
+        buffer = 0             # partial bit results right justified
+        # NOTE: buffer may exceed 31bit.
+        #  CRuby implementation for 64bit architecture has
+        #  63bit integer and it's OK.
+        #  On 32bit architecture, automatically converted to BigInt (may be slow)
+        bits_in_buffer = 0     # number of active bits
 
         while index < str.size
           code, length = CODES[str[index].ord]
@@ -40,6 +44,7 @@ module HTTP2
           end
         end
         if bits_in_buffer > 0
+          # Assume first seven bits for EOS code is all 1.
           emit << (
             (buffer << (8 - bits_in_buffer)) |
             ((1 << (8 - bits_in_buffer)) - 1)
@@ -50,21 +55,28 @@ module HTTP2
       end
 
       # Decodes provided Huffman coded string.
-      # Decoding stops when decoded +len+ characters or +buf+ exhausted.
       #
       # @param buf [Buffer]
       # @return [String] binary string
+      # @raise [CompressionError] when Huffman coded string is malformed
       def decode(buf)
         emit = ''
         state = 0 # start state
+        # Assume BITS_AT_ONCE == 4
         nibbles = buf.chars.flat_map{|x| [(x.ord & 0xf0) >> 4, x.ord & 0xf]}
         until nibbles.empty?
           nb = nibbles.shift
+          # MACHINE[state] = [final, [transitions]]
+          #  [final] unfinished bits so far are prefix of the EOS code.
+          # Each transition is [emit, next]
+          #  [emit] character to be emitted on this transition, empty string, or EOS.
+          #  [next] next state number.
           trans = MACHINE[state][1][nb]
           trans.first == EOS and raise CompressionError.new('Huffman decode error (EOS found)')
           emit << trans.first
           state = trans.last
         end
+        # Check whether partial input is correctly filled
         unless MACHINE[state][0] && nibbles.all?{|x| x == 0xf}
           raise CompressionError.new('Huffman decode error (EOS invalid)')
         end
