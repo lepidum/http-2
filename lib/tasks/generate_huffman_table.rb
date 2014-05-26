@@ -1,32 +1,34 @@
-desc "Generate Huffman precompiled tables"
+desc "Generate Huffman precompiled table in huffman_statemachine.rb"
 task :generate_table do
   HuffmanTable::Node.generate_state_table
 end
 
 require_relative '../http/2/huffman'
 
+# @private
 module HuffmanTable
-  BITS_AT_ONCE = 4
-  EOS = 256
+  BITS_AT_ONCE = 4              # :nodoc:
+  EOS = 256                     # :nodoc:
 
   class Node
-    attr_accessor :next, :emit, :final
+    attr_accessor :next, :emit, :final, :depth
     attr_accessor :transitions
     attr_accessor :id
     @@id = 0
-    def initialize
+    def initialize(depth)
       @next = [nil, nil]
       @id = @@id
       @@id += 1
       @final = false
+      @depth = depth
     end
     def add(code, len, chr)
-      chr == EOS and self.final = true
+      chr == EOS && @depth <= 7 and self.final = true
       if len == 0
         @emit = chr
       else
         bit = (code & (1 << (len - 1))) == 0 ? 0 : 1
-        node = @next[bit] ||= Node.new
+        node = @next[bit] ||= Node.new(@depth + 1)
         node.add(code, len - 1, chr)
       end
     end
@@ -40,7 +42,7 @@ module HuffmanTable
     end
 
     def self.generate_tree
-      @root = new
+      @root = new(0)
       HTTP2::Header::Huffman::CODES.each_with_index do |c, chr|
         code, len = c
         @root.add(code, len, chr)
@@ -133,17 +135,18 @@ TAILER
       @root
     end
 
-    def self.decode(input, len)
+    # Test decoder
+    def self.decode(input)
       emit = ''
       n = root
       nibbles = input.unpack("C*").flat_map{|b| [((b & 0xf0) >> 4), b & 0xf]}
-      while emit.size < len && nibbles.size > 0
+      until nibbles.empty?
         nb = nibbles.shift
         t = n.transitions[nb]
         emit << t.emit
         n = t.node
       end
-      unless emit.size == len && n.final && nibbles.all?{|x| x == 0xf}
+      unless n.final && nibbles.all?{|x| x == 0xf}
         puts "len = #{emit.size} n.final = #{n.final} nibbles = #{nibbles}"
       end
       emit
