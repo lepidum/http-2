@@ -468,6 +468,11 @@ module HTTP2
         end
       end
 
+      # Returns current table size in octets
+      def current_table_size
+        @table.join.bytesize + @table.size * 32
+      end
+
       # To keep the header table size lower than or equal to @limit,
       # remove one or more entries at the end of the header table.
       #
@@ -475,7 +480,7 @@ module HTTP2
       # @param block [Block(refset_entry, table_entry)] called when a refset entry is evicted
       # @return [Boolean]
       def size_check(cmd, &block)
-        cursize = @table.join.bytesize + @table.size * 32
+        cursize = current_table_size
         cmdsize = cmd.nil? ? 0 : cmd.join.bytesize + 32
 
         while cursize + cmdsize > @limit do
@@ -728,7 +733,7 @@ module HTTP2
           header[:name] == 0 and raise CompressionError.new
           header[:name] -= 1
         when :changetablesize
-          header[:size] = integer(buf, type[:prefix])
+          header[:size] = header[:name]
         when :refsetempty
           buf.getbyte # consume the byte
         else
