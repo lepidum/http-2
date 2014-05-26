@@ -110,6 +110,7 @@ module HuffmanTable
 module HTTP2
   module Header
     class Huffman
+      # :nodoc:
       MACHINE = [
 HEADER
         id.times do |i|
