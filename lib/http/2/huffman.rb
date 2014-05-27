@@ -15,43 +15,19 @@ module HTTP2
       EOS = 256
       private_constant :BINARY, :EOS
 
+      def initialize
+        @@encode_table ||= CODES.map{|c,l| [c].pack("N").unpack("B*").first[-l..-1]}
+      end
+
       # Encodes provided value via huffman encoding.
       # Length is not encoded in this method.
       #
       # @param str [String]
       # @return [String] binary string
       def encode(str)
-        str = str.dup.force_encoding(BINARY)
-        index = 0
-        emit = ''              # partial octet results
-        buffer = 0             # partial bit results right justified
-        # NOTE: buffer may exceed 31bit.
-        #  CRuby implementation for 64bit architecture has
-        #  63bit integer and it's OK.
-        #  On 32bit architecture, automatically converted to BigInt (may be slow)
-        bits_in_buffer = 0     # number of active bits
-
-        while index < str.size
-          code, length = CODES[str[index].ord]
-          index += 1
-          buffer = (buffer << length) | code
-          bits_in_buffer += length
-          while bits_in_buffer > 8
-            bits_in_buffer -= 8
-            masked = (buffer & (255 << bits_in_buffer))
-            emit << (masked >> bits_in_buffer).chr(BINARY)
-            buffer ^= masked
-          end
-        end
-        if bits_in_buffer > 0
-          # Assume first seven bits for EOS code is all 1.
-          emit << (
-            (buffer << (8 - bits_in_buffer)) |
-            ((1 << (8 - bits_in_buffer)) - 1)
-            ).chr(BINARY)
-        end
-
-        emit
+        bitstring = str.each_byte.map{|chr| @@encode_table[chr]}.join
+        bitstring << "1" * ((8 - bitstring.size) % 8)
+        [bitstring].pack("B*")
       end
 
       # Decodes provided Huffman coded string.

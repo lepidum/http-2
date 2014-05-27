@@ -20,7 +20,7 @@ describe HTTP2::Header::Huffman do
       it "should decode #{encoded} into #{plain}" do
         @encoder.decode(HTTP2::Buffer.new([encoded].pack("H*"))).should eq plain
       end
-      
+
       [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:16.0) Gecko/20100101 Firefox/16.0",
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -35,6 +35,13 @@ describe HTTP2::Header::Huffman do
           encoded = @encoder.encode(s)
           @encoder.decode(HTTP2::Buffer.new(encoded)).should eq s
         end
+      end
+    end
+
+    it "should encode/decode all_possible 2-byte sequences" do
+      (2**16).times do |n|
+        str = [n].pack("V")[0,2].force_encoding('binary')
+        @encoder.decode(HTTP2::Buffer.new(@encoder.encode(str))).should eq str
       end
     end
 
