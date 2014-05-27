@@ -21,8 +21,6 @@ module HTTP2
       # @param str [String]
       # @return [String] binary string
       def encode(str)
-        str = str.dup.force_encoding(BINARY)
-        index = 0
         emit = ''              # partial octet results
         buffer = 0             # partial bit results right justified
         # NOTE: buffer may exceed 31bit.
@@ -31,12 +29,11 @@ module HTTP2
         #  On 32bit architecture, automatically converted to BigInt (may be slow)
         bits_in_buffer = 0     # number of active bits
 
-        while index < str.size
-          code, length = CODES[str[index].ord]
-          index += 1
+        str.each_byte do |chr|
+          code, length = CODES[chr]
           buffer = (buffer << length) | code
           bits_in_buffer += length
-          while bits_in_buffer > 8
+          while bits_in_buffer >= 8
             bits_in_buffer -= 8
             masked = (buffer & (255 << bits_in_buffer))
             emit << (masked >> bits_in_buffer).chr(BINARY)
@@ -52,6 +49,13 @@ module HTTP2
         end
 
         emit
+      end
+
+      def encode2(str)
+        @@encode_table ||= CODES.map{|c,l| [c].pack("N").unpack("B*").first[-l..-1]}
+        bitstring = str.each_byte.map{|chr| @@encode_table[chr]}.join
+        bitstring << "1" * ((8 - bitstring.size) % 8)
+        [bitstring].pack("B*")
       end
 
       # Decodes provided Huffman coded string.
