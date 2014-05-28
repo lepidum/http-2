@@ -1,3 +1,5 @@
+require_relative 'support/simplecov.rb'  if ENV['SIMPLECOV']
+require_relative 'support/rspec-prof.rb' if ENV['RSPEC_PROFILE']
 require 'http/2'
 require 'json'
 require 'coveralls'
