@@ -13,11 +13,14 @@ begin
 rescue Exception
 end
 
-require 'http/2'
 require 'json'
 require 'coveralls'
+require_relative 'support/simplecov.rb'  if ENV['SIMPLECOV']
+require_relative 'support/rspec-prof.rb' if ENV['RSPEC_PROFILE']
 
 Coveralls.wear! if ENV["CI"]
+
+require 'http/2'
 
 include HTTP2
 include HTTP2::Header

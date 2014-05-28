@@ -11,6 +11,8 @@ group :test do
   gem 'autotest-growl'
   gem 'pry'
   gem 'pry-byebug'
+  gem 'rspec-prof', :require => false
+  gem 'simplecov', :require => false
 end
 
 gemspec
