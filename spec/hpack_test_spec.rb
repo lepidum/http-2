@@ -12,6 +12,7 @@ describe HTTP2::Header do
     haskell-http2-naive-huffman
     haskell-http2-static
     haskell-http2-static-huffman
+    hyper-hpack
     nghttp2
     nghttp2-16384-4096
     nghttp2-change-table-size
