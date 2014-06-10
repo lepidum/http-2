@@ -11,6 +11,7 @@ module HTTP2
     class Huffman
       include Error
 
+      BITS_AT_ONCE = 4
       BINARY = "binary"
       EOS = 256
       private_constant :BINARY, :EOS
@@ -38,22 +39,25 @@ module HTTP2
       def decode(buf)
         emit = ''
         state = 0 # start state
-        # Assume BITS_AT_ONCE == 4
-        nibbles = buf.chars.flat_map{|x| [(x.ord & 0xf0) >> 4, x.ord & 0xf]}
-        until nibbles.empty?
-          nb = nibbles.shift
-          # MACHINE[state] = [final, [transitions]]
-          #  [final] unfinished bits so far are prefix of the EOS code.
-          # Each transition is [emit, next]
-          #  [emit] character to be emitted on this transition, empty string, or EOS.
-          #  [next] next state number.
-          trans = MACHINE[state][1][nb]
-          trans.first == EOS and raise CompressionError.new('Huffman decode error (EOS found)')
-          emit << trans.first
-          state = trans.last
+
+        mask = (1 << BITS_AT_ONCE) - 1
+        buf.each_byte do |chr|
+          (8 / BITS_AT_ONCE - 1).downto(0) do |shift|
+            branch = (chr >> (shift * BITS_AT_ONCE)) & mask
+            # MACHINE[state] = [final, [transitions]]
+            #  [final] unfinished bits so far are prefix of the EOS code.
+            # Each transition is [emit, next]
+            #  [emit] character to be emitted on this transition, empty string, or EOS.
+            #  [next] next state number.
+            trans = MACHINE[state][branch]
+            trans.first == EOS and
+              raise CompressionError.new('Huffman decode error (EOS found)')
+            trans.first && emit << trans.first
+            state = trans.last
+          end
         end
         # Check whether partial input is correctly filled
-        unless MACHINE[state][0] && nibbles.all?{|x| x == 0xf}
+        unless state <= MAX_FINAL_STATE
           raise CompressionError.new('Huffman decode error (EOS invalid)')
         end
         emit.force_encoding(BINARY)
