@@ -7,8 +7,8 @@ require_relative '../http/2/huffman'
 
 # @private
 module HuffmanTable
-  BITS_AT_ONCE = 4              # :nodoc:
-  EOS = 256                     # :nodoc:
+  BITS_AT_ONCE = HTTP2::Header::Huffman::BITS_AT_ONCE
+  EOS          = 256
 
   class Node
     attr_accessor :next, :emit, :final, :depth
@@ -47,6 +47,7 @@ module HuffmanTable
         code, len = c
         @root.add(code, len, chr)
       end
+      puts "#{@@id} nodes"
       @root
     end
 
@@ -72,7 +73,7 @@ module HuffmanTable
               if n.emit == EOS
                 emit = EOS      # cause error on decoding
               else
-                emit << n.emit.chr('binary')
+                emit << n.emit.chr('binary') unless emit == EOS
               end
               n = @root
             end
@@ -92,10 +93,12 @@ module HuffmanTable
       id_state = {}
       state_id[@root] = 0
       id_state[0] = @root
+      max_final = 0
       id = 1
-      (@states - [@root]).each do |s|
+      (@states - [@root]).sort_by{|s|s.final ? 0 : 1}.each do |s|
         state_id[s] = id
         id_state[id] = s
+        max_final = id if s.final
         id += 1
       end
 
@@ -111,17 +114,18 @@ module HTTP2
   module Header
     class Huffman
       # :nodoc:
+      MAX_FINAL_STATE = #{max_final}
       MACHINE = [
 HEADER
         id.times do |i|
           n = id_state[i]
-          f.print "        [#{n.final},["
+          f.print "        ["
           (1 << BITS_AT_ONCE).times do |t|
             emit = n.transitions[t].emit
             emit == EOS or emit = emit.dup.force_encoding('binary')
-            f.print %Q/[#{emit.inspect},#{state_id[n.transitions[t].node]}],/
+            f.print %Q/[#{emit == '' ? "nil" : emit.inspect},#{state_id[n.transitions[t].node]}],/
           end
-          f.print "]],\n"
+          f.print "],\n"
         end
         f.print <<TAILER
       ]
