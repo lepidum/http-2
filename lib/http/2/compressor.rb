@@ -176,10 +176,7 @@ module HTTP2
           @refset.clear
 
         when :changetablesize
-          # TODO: implement
-          @limit = cmd[:name]
-          size_check(nil)
-          # TODO: expect and verify refset emptying on next
+          set_table_size(cmd[:name])
 
         when :indexed
           # Indexed Representation
@@ -459,6 +456,13 @@ module HTTP2
       # @return [Hash] command
       def refsetemptycmd
         { type: :refsetempty }
+      end
+
+      # Alter header table size.
+      #  When the size is reduced, some headers might be evicted.
+      def set_table_size(size)
+        @limit = size
+        size_check(nil)
       end
 
       private

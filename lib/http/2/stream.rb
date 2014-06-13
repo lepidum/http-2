@@ -24,7 +24,7 @@ module HTTP2
   #   |      |      ,-------|:active |-------.      |      |
   #   |      | H   /   ES   |        |   ES   \   H |      |
   #   |      v    v         +--------+         v    v      |
-  #   |   +-----------+          |          +-_---------+  |
+  #   |   +-----------+          |          +-----------+  |
   #   |   |:half_close|          |          |:half_close|  |
   #   |   |  (remote) |          |          |  (local)  |  |
   #   |   +-----------+          |          +-----------+  |
@@ -96,7 +96,7 @@ module HTTP2
           emit(:headers, frame[:payload]) if !frame[:ignore]
         end
       when :priority
-        @priority = frame[:priority]
+        # @priority = frame[:priority]
         emit(:priority, @priority)
       when :window_update
         @window += frame[:increment]
@@ -116,7 +116,7 @@ module HTTP2
       transition(frame, true)
       frame[:stream] ||= @id
 
-      @priority = frame[:priority] if frame[:type] == :priority
+      # @priority = frame[:priority] if frame[:type] == :priority
 
       if frame[:type] == :data
         send_data(frame)
@@ -140,10 +140,10 @@ module HTTP2
       send({type: :headers, flags: flags, payload: headers.to_a})
     end
 
-    def promise(headers, end_push_promise: true, &block)
+    def promise(headers, end_headers: true, &block)
       raise Exception.new("must provide callback") if !block_given?
 
-      flags = end_push_promise ? [:end_push_promise] : []
+      flags = end_headers ? [:end_headers] : []
       emit(:promise, self, headers, flags, &block)
     end
 
@@ -153,7 +153,7 @@ module HTTP2
     # @param p [Integer] new stream priority value
     def reprioritize(p)
       stream_error if @id.even?
-      send({type: :priority, priority: p})
+      # send({type: :priority, priority: p})
     end
 
     # Sends DATA frame containing response payload.

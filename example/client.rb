@@ -43,6 +43,9 @@ conn.on(:frame) do |bytes|
   sock.print bytes
   sock.flush
 end
+conn.on(:frame_received) do |frame|
+  puts "Received frame: #{frame.inspect}"
+end
 
 stream = conn.new_stream
 log = Logger.new(stream.id)
@@ -77,14 +80,14 @@ end
 
 head = {
   ":scheme" => uri.scheme,
-  ":method" => (options[:payload].nil? ? "get" : "post"),
-  ":host" => [uri.host, uri.port].join(':'),
+  ":method" => (options[:payload].nil? ? "GET" : "POST"),
+  ":authority" => [uri.host, uri.port].join(':'),
   ":path" => uri.path,
   "accept" => "*/*"
 }
 
 puts "Sending HTTP 2.0 request"
-if head[":method"] == "get"
+if head[":method"] == "GET"
   stream.headers(head, end_stream: true)
 else
   stream.headers(head, end_stream: false)
