@@ -282,7 +282,7 @@ describe HTTP2::Header do
       refset: :shorter,
       streams: [
         { wire: "8287 8644 0f77 7777 2e65 7861 6d70 6c65
-                   2e63 6f6d",
+                 2e63 6f6d",
           emitted: [
             [":method", "GET"],
             [":scheme", "http"],
@@ -315,7 +315,7 @@ describe HTTP2::Header do
           refset: [0,1,2,3,4],
         },
         { wire: "3085 8c8b 8440 0a63 7573 746f 6d2d 6b65
-                   790c 6375 7374 6f6d 2d76 616c 7565",
+                 790c 6375 7374 6f6d 2d76 616c 7565",
           emitted: [
             [":method", "GET"],
             [":scheme", "https"],
@@ -343,7 +343,7 @@ describe HTTP2::Header do
       huffman: :always,
       refset: :shorter,
       streams: [
-        { wire: "8287 8644 8ce7 cf9b ebe8 9b6f b16f a9b6 ff",
+        { wire: "8287 8644 8cf1 e3c2 e5f2 3a6b a0ab 90f4 ff",
           emitted: [
             [":method", "GET"],
             [":scheme", "http"],
@@ -358,7 +358,7 @@ describe HTTP2::Header do
           ],
           refset: [0,1,2,3],
         },
-        { wire: "5c86 b9b9 9495 56bf",
+        { wire: "5c86 a8eb 1064 9cbf",
           emitted: [
             ["cache-control", "no-cache"],
             [":authority", "www.example.com"],
@@ -375,8 +375,8 @@ describe HTTP2::Header do
           ],
           refset: [0,1,2,3,4],
         },
-        { wire: "3085 8c8b 8440 8857 1c5c db73 7b2f af89
-                   571c 5cdb 7372 4d9c 57",
+        { wire: "3085 8c8b 8440 8825 a849 e95b a97d 7f89
+                 25a8 49e9 5bb8 e8b4 bf",
           emitted: [
             [":method", "GET"],
             [":scheme", "https"],
@@ -468,10 +468,10 @@ describe HTTP2::Header do
       huffman: :always,
       refset: :always,
       streams: [
-        { wire: "4882 4017 5985 bf06 724b 9763 93d6 dbb2
-                   9884 de2a 7188 0506 2098 5131 09b5 6ba3
-                   7191 adce bf19 8e7e 7cf9 bebe 89b6 fb16
-                   fa9b 6f",
+        { wire: "4882 6402 5985 aec3 771a 4b63 96d0 7abe
+                   9410 54d4 44a8 2005 9504 0b81 66e0 82a6
+                   2d1b ff71 919d 29ad 1718 63c7 8f0b 97c8
+                   e9ae 82ae 43d3",
           emitted: [
             [":status", "302"],
             ["cache-control", "private"],
@@ -501,12 +501,12 @@ describe HTTP2::Header do
           ],
           refset: [0,1,2,3],
         },
-        { wire: "8484 4393 d6db b298 84de 2a71 8805 0620
-                   9851 3111 b56b a35e 84ab dd97 ff84 8483
-                   837b b1e0 d6cf 9f6e 8f9f d3e5 f6fa 76fe
-                   fd3c 7edf 9eff 1f2f 0f3c fe9f 6fcf 7f8f
-                   879f 61ad 4f4c c9a9 73a2 200e c372 5e18
-                   b1b7 4e3f",
+        { wire: "8484 4396 d07a be94 1054 d444 a820 0595
+                   040b 8166 e084 a62d 1bff 5e83 9bd9 ab84
+                   8483 837b ad94 e782 1dd7 f2e6 c7b3 35df
+                   dfcd 5b39 60d5 af27 087f 3672 c1ab 270f
+                   b529 1f95 8731 6065 c003 ed4e e5b1 063d
+                   5007",
           emitted: [
             ["cache-control", "private"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],

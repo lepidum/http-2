@@ -2,9 +2,9 @@ require "helper"
 
 describe HTTP2::Header::Huffman do
   huffman_examples = [# plain, encoded
-      ["www.example.com", "e7cf9bebe89b6fb16fa9b6ff"],
-      ["no-cache",        "b9b9949556bf"],
-      ["Mon, 21 Oct 2013 20:13:21 GMT", "d6dbb29884de2a718805062098513109b56ba3"],
+      ["www.example.com", "f1e3c2e5f23a6ba0ab90f4ff"],
+      ["no-cache",        "a8eb10649cbf"],
+      ["Mon, 21 Oct 2013 20:13:21 GMT", "d07abe941054d444a8200595040b8166e082a62d1bff"],
     ]
   context "encode" do
     before(:all) { @encoder = HTTP2::Header::Huffman.new }
@@ -51,7 +51,7 @@ describe HTTP2::Header::Huffman do
       expect { @encoder.decode(HTTP2::Buffer.new(encoded[0...-1])) }.to raise_error(/EOS invalid/)
     end
     it "should raise when input is not padded by 1s" do
-      plain, encoded = ["www.example.com", "e7cf9bebe89b6fb16fa9b6fe"] # note the fe at end
+      plain, encoded = ["www.example.com", "f1e3c2e5f23a6ba0ab90f4fe"] # note the fe at end
       encoded = [encoded].pack("H*")
       expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS invalid/)
     end
@@ -61,7 +61,7 @@ describe HTTP2::Header::Huffman do
       expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS invalid/)
     end
     it "should raise when EOS is explicitly encoded" do
-      encoded = ["4efffffee7"].pack("H*") # a b EOS
+      encoded = ["1c7fffffffff"].pack("H*") # a b EOS
       expect { @encoder.decode(HTTP2::Buffer.new(encoded)) }.to raise_error(/EOS found/)
     end
   end
