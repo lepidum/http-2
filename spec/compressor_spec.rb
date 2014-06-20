@@ -405,10 +405,10 @@ describe HTTP2::Header do
       refset: :always,
       streams: [
         { wire: "4803 3330 3259 0770 7269 7661 7465 631d
-                   4d6f 6e2c 2032 3120 4f63 7420 3230 3133
-                   2032 303a 3133 3a32 3120 474d 5471 1768
-                   7474 7073 3a2f 2f77 7777 2e65 7861 6d70
-                   6c65 2e63 6f6d",
+                 4d6f 6e2c 2032 3120 4f63 7420 3230 3133
+                 2032 303a 3133 3a32 3120 474d 5471 1768
+                 7474 7073 3a2f 2f77 7777 2e65 7861 6d70
+                 6c65 2e63 6f6d",
           emitted: [
             [":status", "302"],
             ["cache-control", "private"],
@@ -439,12 +439,12 @@ describe HTTP2::Header do
           refset: [0,1,2,3],
         },
         { wire: "8484 431d 4d6f 6e2c 2032 3120 4f63 7420
-                   3230 3133 2032 303a 3133 3a32 3220 474d
-                   545e 0467 7a69 7084 8483 837b 3866 6f6f
-                   3d41 5344 4a4b 4851 4b42 5a58 4f51 5745
-                   4f50 4955 4158 5157 454f 4955 3b20 6d61
-                   782d 6167 653d 3336 3030 3b20 7665 7273
-                   696f 6e3d 31",
+                 3230 3133 2032 303a 3133 3a32 3220 474d
+                 545e 0467 7a69 7084 8483 837b 3866 6f6f
+                 3d41 5344 4a4b 4851 4b42 5a58 4f51 5745
+                 4f50 4955 4158 5157 454f 4955 3b20 6d61
+                 782d 6167 653d 3336 3030 3b20 7665 7273
+                 696f 6e3d 31",
           emitted: [
             ["cache-control", "private"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
@@ -469,9 +469,9 @@ describe HTTP2::Header do
       refset: :always,
       streams: [
         { wire: "4882 6402 5985 aec3 771a 4b63 96d0 7abe
-                   9410 54d4 44a8 2005 9504 0b81 66e0 82a6
-                   2d1b ff71 919d 29ad 1718 63c7 8f0b 97c8
-                   e9ae 82ae 43d3",
+                 9410 54d4 44a8 2005 9504 0b81 66e0 82a6
+                 2d1b ff71 919d 29ad 1718 63c7 8f0b 97c8
+                 e9ae 82ae 43d3",
           emitted: [
             [":status", "302"],
             ["cache-control", "private"],
@@ -502,11 +502,11 @@ describe HTTP2::Header do
           refset: [0,1,2,3],
         },
         { wire: "8484 4396 d07a be94 1054 d444 a820 0595
-                   040b 8166 e084 a62d 1bff 5e83 9bd9 ab84
-                   8483 837b ad94 e782 1dd7 f2e6 c7b3 35df
-                   dfcd 5b39 60d5 af27 087f 3672 c1ab 270f
-                   b529 1f95 8731 6065 c003 ed4e e5b1 063d
-                   5007",
+                 040b 8166 e084 a62d 1bff 5e83 9bd9 ab84
+                 8483 837b ad94 e782 1dd7 f2e6 c7b3 35df
+                 dfcd 5b39 60d5 af27 087f 3672 c1ab 270f
+                 b529 1f95 8731 6065 c003 ed4e e5b1 063d
+                 5007",
           emitted: [
             ["cache-control", "private"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
