@@ -359,8 +359,8 @@ describe HTTP2::Framer do
   end
 
   context "Padding" do
-    [:data, :headers, :continuation, :push_promise].each do |type|
-      [1,256,257,1334].each do |padlen|
+    [:data, :headers, :push_promise].each do |type|
+      [1,256].each do |padlen|
         context "generating #{type} frame padded #{padlen}" do
           before do
             @frame = {
@@ -377,7 +377,7 @@ describe HTTP2::Framer do
             @padded.bytesize.should eq @normal.bytesize + padlen
           end
           it "should fill padded octets with zero" do
-            trailer_len = padlen - (padlen > 256 ? 2 : 1)
+            trailer_len = padlen - 1
             @padded[-trailer_len, trailer_len].should match(/\A\0*\z/)
           end
           it "should parse a frame with padding" do
@@ -389,6 +389,22 @@ describe HTTP2::Framer do
           end
         end
       end
+      [257,1334].each do |padlen|
+        before do
+          @frame = {
+            length: 12,
+            type: type,
+            stream: 1,
+            payload: 'example data',
+          }
+          type == :push_promise and @frame[:promise_stream] = 2
+        end
+        it "should raise error on trying to generate #{type} frame padded with too long #{padlen}" do
+          expect {
+            f.generate(@frame.merge(:padding => padlen))
+          }.to raise_error(CompressionError, /padding/i)
+        end
+      end
     end
     context "with invalid paddings" do
       before do
@@ -398,16 +414,12 @@ describe HTTP2::Framer do
           stream: 1,
           payload: 'example data',
         }
-        @padlen = 341
+        @padlen = 123
         @padded = f.generate(@frame.merge(:padding => @padlen))
       end
       it "should raise exception when the given padding is longer than the payload" do
-        @padded.setbyte(8,2)
-        expect { f.parse(Buffer.new(@padded)) }.to raise_error(CompressionError, /padding/)
-      end
-      it "should raise exception when PAD_HIGH is given but not PAD_LOW" do
-        @padded.setbyte(3,0x10)
-        expect { f.parse(Buffer.new(@padded)) }.to raise_error(CompressionError, /PAD_HIGH/)
+        @padded.setbyte(8,240)
+        expect { f.parse(Buffer.new(@padded)) }.to raise_error(ProtocolError, /padding/)
       end
     end
   end

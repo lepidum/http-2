@@ -30,34 +30,29 @@ module HTTP2
       blocked:       0xb,
     }
 
-    FRAME_TYPES_WITH_PADDING = [ :data, :headers, :push_promise, :continuation ]
+    FRAME_TYPES_WITH_PADDING = [ :data, :headers, :push_promise ]
 
     # Per frame flags as defined by the spec
     FRAME_FLAGS = {
       data: {
         end_stream:  0, end_segment: 1,
-        pad_low: 3, pad_high: 4,
-        compressed: 5
+        padded: 3, compressed: 5
       },
       headers: {
         end_stream:  0, end_segment: 1, end_headers: 2,
-        pad_low: 3, pad_high: 4,
-        priority: 5,
+        padded: 3, priority: 5,
       },
       priority:     {},
       rst_stream:   {},
       settings:     { ack: 0 },
       push_promise: {
         end_headers: 2,
-        pad_low: 3, pad_high: 4,
+        padded: 3,
       },
       ping:         { ack: 0 },
       goaway:       {},
       window_update:{},
-      continuation: {
-        end_headers: 2,
-        pad_low: 3, pad_high: 4,
-      },
+      continuation: { end_headers: 2 },
       altsvc: {},
       blocked: {},
     }
@@ -291,11 +286,10 @@ module HTTP2
 
         length += padlen
         if padlen > 256
-          bytes.prepend([padlen -= 2].pack(UINT16))
-          frame[:flags] << :pad_low << :pad_high
+          raise CompressionError.new("Padding too long (#{padlen})")
         else
           bytes.prepend([padlen -= 1].pack(UINT8))
-          frame[:flags] << :pad_low
+          frame[:flags] << :padded
         end
         # Padding:  Padding octets that contain no application semantic value.
         # Padding octets MUST be set to zero when sending and ignored when
@@ -322,22 +316,14 @@ module HTTP2
       # Process padding
       padlen = 0
       if FRAME_TYPES_WITH_PADDING.include?(frame[:type])
-        high = frame[:flags].include?(:pad_high)
-        low  = frame[:flags].include?(:pad_low)
-        high && !low and raise CompressionError.new("PAD_HIGH without PAD_LOW")
-        if low
-          if high
-            padlen = payload.read(2).unpack(UINT16).first
-            frame[:padding] = padlen + 2
-          else
-            padlen = payload.read(1).unpack(UINT8).first
-            frame[:padding] = padlen + 1
-          end
-          padlen > payload.bytesize and raise CompressionError.new("padding too long")
+        padded = frame[:flags].include?(:padded)
+        if padded
+          padlen = payload.read(1).unpack(UINT8).first
+          frame[:padding] = padlen + 1
+          padlen > payload.bytesize and raise ProtocolError.new("padding too long")
           padlen > 0 and payload.slice!(-padlen,padlen)
           frame[:length] -= frame[:padding]
-          high and frame[:flags].delete(:pad_high)
-          low  and frame[:flags].delete(:pad_low)
+          frame[:flags].delete(:padded)
         end
       end
 
