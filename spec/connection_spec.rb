@@ -221,14 +221,6 @@ describe HTTP2::Connection do
       }.to raise_error(CompressionError)
     end
 
-    it "should raise connection error on decode exception" do
-      @conn << f.generate(SETTINGS)
-      frame = f.generate(HEADERS.dup)
-      frame[1] = 0.chr
-
-      expect { @conn << frame }.to raise_error(ProtocolError)
-    end
-
     it "should emit encoded frames via on(:frame)" do
       bytes = nil
       @conn.on(:frame) {|d| bytes = d }

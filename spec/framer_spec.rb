@@ -24,7 +24,7 @@ describe HTTP2::Framer do
       f.readCommonHeader(Buffer.new(bytes)).should eq frame
     end
 
-    it "should raise exception on invalid frame type" do
+    it "should raise exception on invalid frame type when sending" do
       expect {
         frame[:type] = :bogus
         f.commonHeader(frame)
@@ -462,6 +462,17 @@ describe HTTP2::Framer do
 
     f.parse(bytes[0...-1]).should be_nil
     f.parse(bytes).should eq frame
+    bytes.should be_empty
+  end
+
+  it "should ignore unknown extension frames" do
+    frame = {type: :headers, stream: 1, payload: "headers"}
+    bytes = f.generate(frame)
+    bytes = Buffer.new(bytes + bytes) # Two HEADERS frames in bytes
+    bytes.setbyte(2, 42) # Make the first unknown type 42
+
+    f.parse(bytes).should be_nil   # first frame should be ignored
+    f.parse(bytes).should eq frame # should generate only one HEADERS
     bytes.should be_empty
   end
 

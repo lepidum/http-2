@@ -142,9 +142,11 @@ module HTTP2
       frame[:length], type, flags, stream = buf.slice(0,8).unpack(HEADERPACK)
 
       frame[:type], _ = FRAME_TYPES.select { |t,pos| type == pos }.first
-      frame[:flags] = FRAME_FLAGS[frame[:type]].reduce([]) do |acc, (name, pos)|
-        acc << name if (flags & (1 << pos)) > 0
-        acc
+      if frame[:type]
+        frame[:flags] = FRAME_FLAGS[frame[:type]].reduce([]) do |acc, (name, pos)|
+          acc << name if (flags & (1 << pos)) > 0
+          acc
+        end
       end
 
       frame[:stream] = stream & RBIT
@@ -313,6 +315,11 @@ module HTTP2
       buf.read(8)
       payload = buf.read(frame[:length])
 
+      # Implementations MUST discard frames
+      # that have unknown or unsupported types.
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-5.5
+      return nil if frame[:type].nil?
+
       # Process padding
       padlen = 0
       if FRAME_TYPES_WITH_PADDING.include?(frame[:type])
@@ -396,6 +403,8 @@ module HTTP2
         end
       when :blocked
         # no flags, no payload
+      else
+        # Unknown frame type is explicitly allowed
       end
 
       frame
