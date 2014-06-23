@@ -203,7 +203,9 @@ module HTTP2
         end
 
         frame[:payload].each do |(k,v)|
-          if !k.is_a? Integer
+          if k.is_a? Integer
+            DEFINED_SETTINGS.has_value?(k) or next
+          else
             k = DEFINED_SETTINGS[k]
 
             if k.nil?
@@ -211,9 +213,9 @@ module HTTP2
             end
           end
 
-          bytes  << [k].pack(UINT8)
+          bytes  << [k].pack(UINT16)
           bytes  << [v].pack(UINT32)
-          length += 5
+          length += 6
         end
 
       when :push_promise
@@ -359,12 +361,23 @@ module HTTP2
         frame[:error] = unpack_error payload.read_uint32
 
       when :settings
+        # NOTE: frame[:length] might not match the number of frame[:payload]
+        # because unknown extensions are ignored.
         frame[:payload] = []
-        (frame[:length] / 5).times do
-          id  = payload.getbyte
+        unless frame[:length] % 6 == 0
+          raise ProtocolError.new("Invalid settings payload length")
+        end
+
+        if frame[:stream] != 0
+          raise ProtocolError.new("Invalid stream ID (#{frame[:stream]})")
+        end
+
+        (frame[:length] / 6).times do
+          id  = payload.read(2).unpack(UINT16).first
           val = payload.read_uint32
 
           # Unsupported or unrecognized settings MUST be ignored.
+          # Here we send it along.
           name, _ = DEFINED_SETTINGS.select { |name, v| v == id }.first
           frame[:payload] << [name, val] if name
         end

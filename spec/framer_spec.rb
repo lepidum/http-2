@@ -138,7 +138,6 @@ describe HTTP2::Framer do
   context "SETTINGS" do
     let(:frame) {
       {
-        length: 5,
         type: :settings,
         flags: [],
         stream: 0,
@@ -150,35 +149,76 @@ describe HTTP2::Framer do
     }
 
     it "should generate and parse bytes" do
-
       bytes = f.generate(frame)
-      bytes.should eq [10,0x4,0x0,0x0,3,10,1,2048].pack("nCCNCNCN")
-      f.parse(bytes).should eq frame
+      bytes.should eq [12,0x4,0x0,0x0,3,10,1,2048].pack("nCCNnNnN")
+      parsed = f.parse(bytes)
+      parsed.delete(:length)
+      frame.delete(:length)
+      parsed.should eq frame
     end
 
-    it "should ignore custom settings" do
-      frame[:length] = 5*2
+    it "should generate settings when id is given as an integer" do
+      frame[:payload][1][0] = 1
+      bytes = f.generate(frame)
+      bytes.should eq [12,0x4,0x0,0x0,3,10,1,2048].pack("nCCNnNnN")
+    end
+
+    it "should ignore custom settings when sending" do
+      frame[:payload] = [
+        [:settings_max_concurrent_streams, 10],
+        [:settings_initial_window_size,    20],
+        [55, 30],
+      ]
+
+      buf = f.generate(frame)
+      frame[:payload].slice!(2) # cut off the extension
+      frame[:length] = 12       # frame length should be computed WITHOUT extensions
+      f.parse(buf).should eq frame
+    end
+
+    it "should ignore custom settings when receiving" do
       frame[:payload] = [
         [:settings_max_concurrent_streams, 10],
         [:settings_initial_window_size,    20],
       ]
 
-      buf = f.generate(frame.merge({55 => 30}))
-      f.parse(buf).should eq frame
+      buf = f.generate(frame)
+      buf.setbyte(1, 18)
+      buf << "\x00\x37\x00\x00\x00\x1e"
+      parsed = f.parse(buf)
+      parsed.delete(:length)
+      frame.delete(:length)
+      parsed.should eq frame
     end
 
-    it "should raise exception on invalid stream ID" do
+    it "should raise exception on sending invalid stream ID" do
       expect {
         frame[:stream] = 1
         f.generate(frame)
       }.to raise_error(CompressionError, /Invalid stream ID/)
     end
 
-    it "should raise exception on invalid setting" do
+    it "should raise exception on receiving invalid stream ID" do
+      expect {
+        buf = f.generate(frame)
+        buf.setbyte(7, 1)
+        f.parse(buf)
+      }.to raise_error(ProtocolError, /Invalid stream ID/)
+    end
+
+    it "should raise exception on sending invalid setting" do
       expect {
         frame[:payload] = [[:random, 23]]
         f.generate(frame)
       }.to raise_error(CompressionError, /Unknown settings ID/)
+    end
+
+    it "should raise exception on receiving invalid payload length" do
+      expect {
+        buf = f.generate(frame)
+        buf.setbyte(1, 11)
+        f.parse(buf)
+      }.to raise_error(ProtocolError, /Invalid settings payload length/)
     end
   end
 
@@ -378,7 +418,7 @@ describe HTTP2::Framer do
       [{type: :headers, stream: 1, payload: "abc"}, 3],
       [{type: :priority, stream: 3, stream_dependency: 30, exclusive: false, weight: 1}, 5],
       [{type: :rst_stream, stream: 3, error: 100}, 4],
-      [{type: :settings, payload: [[:settings_max_concurrent_streams, 10]]}, 5],
+      [{type: :settings, payload: [[:settings_max_concurrent_streams, 10]]}, 6],
       [{type: :push_promise, promise_stream: 5, payload: "abc"}, 7],
       [{type: :ping, payload: "blob"*2}, 8],
       [{type: :goaway, last_stream: 5, error: 20, payload: "blob"}, 12],
