@@ -33,7 +33,7 @@ PRIORITY = {
   type: :priority,
   stream: 1,
   exclusive: false,
-  stream_dependency: 1,
+  stream_dependency: 0,
   weight: 16,
 }
 

@@ -54,9 +54,9 @@ describe HTTP2::Stream do
         @stream.state.should eq :closed
       end
 
-      xit "should reprioritize stream on PRIORITY" do
-        @stream.receive PRIORITY.merge({priority: 30})
-        @stream.priority.should eq 30
+      it "should reprioritize stream on PRIORITY" do
+        expect { @stream.receive PRIORITY }.to_not raise_error
+        # TODO: @stream.priority.should eq 15
       end
     end
 
@@ -94,9 +94,9 @@ describe HTTP2::Stream do
         @stream.state.should eq :closed
       end
 
-      xit "should reprioritize stream on PRIORITY" do
-        @stream.send PRIORITY
-        @stream.priority.should eq 15
+      it "should reprioritize stream on PRIORITY" do
+        expect { @stream.send PRIORITY }.to_not raise_error
+        # TODO: @stream.priority.should eq 15
       end
     end
 
@@ -236,7 +236,7 @@ describe HTTP2::Stream do
       before(:each) { @stream.send HEADERS_END_STREAM }
 
       it "should raise error on attempt to send frames" do
-        (FRAME_TYPES - [RST_STREAM]).each do |frame|
+        (FRAME_TYPES - [PRIORITY, RST_STREAM]).each do |frame|
           expect { @stream.dup.send frame }.to raise_error StreamError
         end
       end
@@ -267,6 +267,11 @@ describe HTTP2::Stream do
         @stream.state.should eq :half_closed_local
       end
 
+      it "should reprioritize stream on PRIORITY" do
+        expect { @stream.send PRIORITY }.to_not raise_error
+        # TODO: @stream.priority.should eq 15
+      end
+
       it "should emit :half_close event on transition" do
         order = []
         stream = @client.new_stream
@@ -294,7 +299,7 @@ describe HTTP2::Stream do
       before(:each) { @stream.receive HEADERS_END_STREAM }
 
       it "should raise STREAM_CLOSED error on reciept of frames" do
-        (FRAME_TYPES - [RST_STREAM, WINDOW_UPDATE]).each do |frame|
+        (FRAME_TYPES - [PRIORITY, RST_STREAM, WINDOW_UPDATE]).each do |frame|
           expect {
             @stream.dup.receive frame
           }.to raise_error(StreamClosed)
@@ -325,6 +330,11 @@ describe HTTP2::Stream do
       it "should ignore received WINDOW_UPDATE frames" do
         expect { @stream.receive WINDOW_UPDATE }.to_not raise_error
         @stream.state.should eq :half_closed_remote
+      end
+
+      it "should reprioritize stream on PRIORITY" do
+        expect { @stream.receive PRIORITY }.to_not raise_error
+        # TODO: @stream.priority.should eq 15
       end
 
       it "should emit :half_close event on transition" do
@@ -358,7 +368,7 @@ describe HTTP2::Stream do
         end
 
         it "should raise STREAM_CLOSED on attempt to send frames" do
-          (FRAME_TYPES - [RST_STREAM]).each do |frame|
+          (FRAME_TYPES - [PRIORITY, RST_STREAM]).each do |frame|
             expect {
               @stream.dup.send frame
             }.to raise_error(StreamClosed)
@@ -366,20 +376,28 @@ describe HTTP2::Stream do
         end
 
         it "should raise STREAM_CLOSED on receipt of frame" do
-          (FRAME_TYPES - [RST_STREAM]).each do |frame|
+          (FRAME_TYPES - [PRIORITY, RST_STREAM, WINDOW_UPDATE]).each do |frame|
             expect {
               @stream.dup.receive frame
             }.to raise_error(StreamClosed)
           end
         end
 
-        it "should allow RST_STREAM to be sent" do
+        it "should allow PRIORITY, RST_STREAM to be sent" do
+          expect { @stream.send PRIORITY }.to_not raise_error
           expect { @stream.send RST_STREAM }.to_not raise_error
         end
 
-        it "should not send RST_STREAM on receipt of RST_STREAM" do
+        it "should allow PRIORITY, RST_STREAM to be received" do
+          expect { @stream.receive PRIORITY }.to_not raise_error
           expect { @stream.receive RST_STREAM }.to_not raise_error
         end
+
+        it "should reprioritize stream on PRIORITY" do
+          expect { @stream.receive PRIORITY }.to_not raise_error
+          # TODO: @stream.priority.should eq 15
+        end
+
       end
 
       context "local closed via RST_STREAM frame" do
@@ -407,22 +425,27 @@ describe HTTP2::Stream do
           # We're auto RST'ing PUSH streams in connection class, hence
           # skipping this transition for now.
         #end
+
       end
 
-     context "local closed via END_STREAM flag" do
-        before(:each) do
-          @stream.send HEADERS  # open
-          @stream.send DATA     # contains end_stream flag
-        end
+      # FIXME: Isn't this test same as "half closed (local)"?
+      # context "local closed via END_STREAM flag" do
+      #   before(:each) do
+      #     @stream.send HEADERS  # open
+      #     @stream.send DATA     # contains end_stream flag
+      #   end
 
-        it "should ignore received frames" do
-          FRAME_TYPES.each do |frame|
-            expect { @stream.dup.receive frame }.to_not raise_error
-          end
-        end
-      end
+      #   it "should ignore received frames" do
+      #     FRAME_TYPES.each do |frame|
+      #       expect { @stream.dup.receive frame }.to_not raise_error
+      #     end
+      #   end
+      # end
+
     end
   end # end stream states
+
+  # TODO: add test cases to ensure on(:priority) emitted after close
 
   context "flow control" do
     it "should initialize to default flow control window" do

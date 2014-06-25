@@ -97,7 +97,7 @@ module HTTP2
         end
       when :priority
         # @priority = frame[:priority]
-        emit(:priority, @priority)
+        # emit(:priority, @priority)
       when :window_update
         @window += frame[:increment]
         send_data
@@ -346,6 +346,8 @@ module HTTP2
         if sending
           if frame[:type] == :rst_stream
             event(:local_rst)
+          elsif frame[:type] == :priority
+            # process
           else
             stream_error
           end
@@ -354,7 +356,9 @@ module HTTP2
           when :data, :headers, :continuation
             event(:remote_closed) if end_stream?(frame)
           when :rst_stream then event(:remote_rst)
-          when :window_update, :priority
+          when :priority
+            # process
+          when :window_update
             frame[:ignore] = true
           end
         end
@@ -380,6 +384,7 @@ module HTTP2
           case frame[:type]
           when :rst_stream then event(:remote_rst)
           when :window_update then frame[:ignore] = true
+          when :priority # process
           else stream_error(:stream_closed); end
         end
 
@@ -407,15 +412,20 @@ module HTTP2
         if sending
           case frame[:type]
           when :rst_stream then # ignore
+          when :priority   then # process
           else
             stream_error(:stream_closed) if !(frame[:type] == :rst_stream)
           end
         else
-          case @closed
-          when :remote_rst, :remote_closed
-            stream_error(:stream_closed) if !(frame[:type] == :rst_stream)
-          when :local_rst, :local_closed
-            frame[:ignore] = true
+          if frame[:type] == :priority
+            # process
+          else
+            case @closed
+            when :remote_rst, :remote_closed
+              stream_error(:stream_closed) if !(frame[:type] == :rst_stream)
+            when :local_rst, :local_closed
+              frame[:ignore] = true
+            end
           end
         end
       end
