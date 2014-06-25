@@ -173,16 +173,15 @@ module HTTP2
           @continuation << frame
           return if !frame[:flags].include? :end_headers
 
-          headers = @continuation.collect do |chunk|
-            decode_headers(chunk)
-            chunk[:payload]
-          end.flatten(1)
+          payload = @continuation.map {|f| f[:payload]}.join
 
           frame = @continuation.shift
           @continuation.clear
 
+          puts "frame = #{frame.inspect}"
+
           frame.delete(:length)
-          frame[:payload] = headers
+          frame[:payload] = Buffer.new(payload)
           frame[:flags] << :end_headers
         end
 

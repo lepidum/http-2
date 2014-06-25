@@ -183,11 +183,14 @@ describe HTTP2::Connection do
 
       cc = Compressor.new(:response)
       h1, h2 = HEADERS.dup, CONTINUATION.dup
-      h1[:payload] = cc.encode([req_headers.first])
+
+      # Header block fragment might not complete for decompression
+      payload = cc.encode(req_headers)
+      h1[:payload] = payload.slice!(0, payload.size/2) # first half
       h1[:stream] = 5
       h1[:flags] = []
 
-      h2[:payload] = cc.encode([req_headers.last])
+      h2[:payload] = payload # the remaining
       h2[:stream] = 5
 
       @conn << f.generate(SETTINGS)
