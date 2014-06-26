@@ -21,7 +21,7 @@ module HTTP2
   DEFAULT_CONNECTIONS_SETTINGS = {
     settings_header_table_size:       4096,
     settings_enable_push:             1,     # enabled for servers
-    settings_max_concurrent_streams:  100,   # unlimited
+    settings_max_concurrent_streams:  100,
     settings_initial_window_size:     65535, #
     settings_compress_data:           0,     # disabled
   }.freeze
@@ -178,8 +178,6 @@ module HTTP2
           frame = @continuation.shift
           @continuation.clear
 
-          puts "frame = #{frame.inspect}"
-
           frame.delete(:length)
           frame[:payload] = Buffer.new(payload)
           frame[:flags] << :end_headers
@@ -300,7 +298,9 @@ module HTTP2
             goaway(frame[:error])
           end
         else
-          emit(:frame, encode(frame))
+          # HEADERS and PUSH_PROMISE may generate CONTINUATION
+          frames = encode(frame)
+          frames.each {|f| emit(:frame, f) }
         end
       end
     end
@@ -308,14 +308,15 @@ module HTTP2
     # Applies HTTP 2.0 binary encoding to the frame.
     #
     # @param frame [Hash]
-    # @return [Buffer] encoded frame
+    # @return [Array of Buffer] encoded frame
     def encode(frame)
+      frames = [frame]
       if frame[:type] == :headers ||
          frame[:type] == :push_promise
-        encode_headers(frame)
+        frames = encode_headers(frame)
       end
 
-      @framer.generate(frame)
+      frames.map {|f| @framer.generate(f) }
     end
 
     # Check if frame is a connection frame: SETTINGS, PING, GOAWAY, and any
@@ -451,13 +452,35 @@ module HTTP2
     # Encode headers payload and update connection compressor state.
     #
     # @param frame [Hash]
+    # @return [Array of Frame]
     def encode_headers(frame)
-      if !frame[:payload].is_a? String
-        frame[:payload] = @compressor.encode(frame[:payload])
+      payload = frame[:payload]
+      unless payload.is_a? String
+        # TODO: pre-process multi-valued headers prior to HPACK
+        payload = @compressor.encode(payload)
       end
 
+      frames = []
+
+      while payload.size > 0
+        cont = frame.dup
+        cont[:type] = :continuation
+        cont[:flags] = []
+        cont[:payload] = payload.slice!(0, Framer::MAX_PAYLOAD_SIZE)
+        frames << cont
+      end
+      if frames.empty?
+        frames = [frame]
+      else
+        frames.first[:type]  = frame[:type]
+        frames.first[:flags] = frame[:flags] - [:end_headers]
+        frames.last[:flags]  << :end_headers
+      end
+
+      frames
+
     rescue Exception => e
-      connection_error(:compression_error, msg: e.message)
+      [connection_error(:compression_error, msg: e.message)]
     end
 
     # Activates new incoming or outgoing stream and registers appropriate

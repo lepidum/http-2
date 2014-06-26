@@ -234,7 +234,6 @@ describe HTTP2::Connection do
     end
 
     it "should compress stream headers" do
-      @conn.ping("12345678")
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
         bytes.should_not match('get')
@@ -249,6 +248,28 @@ describe HTTP2::Connection do
         ':authority' => 'www.example.org',
         ':path'   => '/resource'
       })
+    end
+
+    it "should generate CONTINUATION if HEADERS is too long" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 22000,
+      }, end_stream: true)
+      headers.size.should eq 2
+      headers[0][:type].should eq :headers
+      headers[1][:type].should eq :continuation
+      headers[0][:flags].should eq [:end_stream]
+      headers[1][:flags].should eq [:end_headers]
     end
   end
 
@@ -326,11 +347,15 @@ describe HTTP2::Connection do
     it "should send GOAWAY frame on connection error" do
       stream = @conn.new_stream
 
-      @conn.stub(:encode)
+      @conn.should_receive(:encode) do |frame|
+        frame[:type].should eq :settings
+        [frame]
+      end
       @conn.should_receive(:encode) do |frame|
         frame[:type].should eq :goaway
         frame[:last_stream].should eq stream.id
         frame[:error].should eq :protocol_error
+        [frame]
       end
 
       expect { @conn << f.generate(DATA) }.to raise_error(ProtocolError)
