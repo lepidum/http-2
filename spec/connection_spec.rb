@@ -263,8 +263,78 @@ describe HTTP2::Connection do
         ':scheme' => 'http',
         ':authority' => 'www.example.org',
         ':path'   => '/resource',
-        'custom' => 'q' * 22000,
+        'custom' => 'q' * 44000,
       }, end_stream: true)
+      headers.size.should eq 3
+      headers[0][:type].should eq :headers
+      headers[1][:type].should eq :continuation
+      headers[2][:type].should eq :continuation
+      headers[0][:flags].should eq [:end_stream]
+      headers[1][:flags].should eq []
+      headers[2][:flags].should eq [:end_headers]
+    end
+
+    it "should not generate CONTINUATION if HEADERS fits exactly in a frame" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers.size.should eq 1
+      headers[0][:type].should eq :headers
+      headers[0][:flags].should include(:end_headers)
+      headers[0][:flags].should include(:end_stream)
+    end
+
+    it "should not generate CONTINUATION if HEADERS fits exactly in a frame" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers.size.should eq 1
+      headers[0][:type].should eq :headers
+      headers[0][:flags].should include(:end_headers)
+      headers[0][:flags].should include(:end_stream)
+    end
+
+    it "should generate CONTINUATION if HEADERS exceed the max payload by one byte" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers[1][:length].should eq 1
       headers.size.should eq 2
       headers[0][:type].should eq :headers
       headers[1][:type].should eq :continuation
