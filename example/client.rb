@@ -60,6 +60,10 @@ conn.on(:promise) do |promise|
   end
 end
 
+conn.on(:altsvc) do |f|
+  log.info "received ALTSVC #{f}"
+end
+
 stream.on(:close) do
   log.info "stream closed"
   sock.close
@@ -77,6 +81,11 @@ end
 stream.on(:data) do |d|
   log.info "response data chunk: <<#{d}>>"
 end
+
+stream.on(:altsvc) do |f|
+  log.info "received ALTSVC #{f}"
+end
+
 
 head = {
   ":scheme" => uri.scheme,

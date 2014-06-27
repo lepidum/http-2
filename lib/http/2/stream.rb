@@ -97,6 +97,8 @@ module HTTP2
       when :window_update
         @window += frame[:increment]
         send_data
+      when :altsvc, :blocked
+        emit(frame[:type], frame)
       end
 
       complete_transition(frame)

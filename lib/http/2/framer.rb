@@ -247,8 +247,8 @@ module HTTP2
         length += frame[:payload].bytesize
 
       when :altsvc
-        bytes << [frame[:max_age], frame[:port], 0].pack(UINT32 + UINT16 + UINT8)
-        length += 7
+        bytes << [frame[:max_age], frame[:port]].pack(UINT32 + UINT16)
+        length += 6
         if frame[:proto]
           frame[:proto].bytesize > 255 and raise CompressionError.new("Proto too long")
           bytes << [frame[:proto].bytesize].pack(UINT8) << frame[:proto].force_encoding(BINARY)
@@ -390,7 +390,7 @@ module HTTP2
       when :continuation
         frame[:payload] = payload.read(frame[:length])
       when :altsvc
-        frame[:max_age], frame[:port], _ = payload.read(7).unpack(UINT32 + UINT16 + UINT8)
+        frame[:max_age], frame[:port] = payload.read(6).unpack(UINT32 + UINT16)
 
         len = payload.getbyte
         len > 0 and frame[:proto] = payload.read(len)
