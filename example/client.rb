@@ -39,7 +39,7 @@ end
 
 conn = HTTP2::Client.new
 conn.on(:frame) do |bytes|
-  puts "Sending bytes: #{bytes.inspect}"
+  puts "Sending bytes: #{bytes.unpack("H*").first}"
   sock.print bytes
   sock.flush
 end
@@ -96,7 +96,7 @@ end
 
 while !sock.closed? && !sock.eof?
   data = sock.read_nonblock(1024)
-  # puts "Received bytes: #{data.inspect}"
+  puts "Received bytes: #{data.unpack("H*").first}"
 
   begin
     conn << data

@@ -16,8 +16,8 @@ Pure ruby, framework and transport agnostic implementation of [HTTP 2.0 protocol
 
 Current implementation (see [HPBN chapter for HTTP 2.0 overview](http://chimera.labs.oreilly.com/books/1230000000545/ch12.html)), is based on:
 
-* [draft-ietf-httpbis-http2-06](http://tools.ietf.org/html/draft-ietf-httpbis-http2-06)
-* [draft-ietf-httpbis-header-compression-03](http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-03)
+* [draft-ietf-httpbis-http2-13](http://tools.ietf.org/html/draft-ietf-httpbis-http2-13)
+* [draft-ietf-httpbis-header-compression-08](http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08)
 
 _Note: the underlying specifications are still evolving, expect APIs to change and evolve also..._
 

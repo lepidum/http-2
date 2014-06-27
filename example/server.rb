@@ -31,7 +31,7 @@ loop do
 
   conn = HTTP2::Server.new
   conn.on(:frame) do |bytes|
-    puts "Writing bytes: #{bytes.inspect}"
+    puts "Writing bytes: #{bytes.unpack("H*").first}"
     sock.write bytes
   end
 
