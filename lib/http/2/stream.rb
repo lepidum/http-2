@@ -90,11 +90,7 @@ module HTTP2
       when :data
         emit(:data, frame[:payload]) if !frame[:ignore]
       when :headers, :push_promise
-        if frame[:payload].is_a? Array
-          emit(:headers, Hash[*frame[:payload].flatten]) if !frame[:ignore]
-        else
-          emit(:headers, frame[:payload]) if !frame[:ignore]
-        end
+        emit(:headers, frame[:payload]) if !frame[:ignore]
       when :priority
         # @priority = frame[:priority]
         # emit(:priority, @priority)
@@ -129,7 +125,7 @@ module HTTP2
 
     # Sends a HEADERS frame containing HTTP response headers.
     #
-    # @param headers [Hash]
+    # @param headers [Array or Hash] Array of key-value pairs or Hash
     # @param end_headers [Boolean] indicates that no more headers will be sent
     # @param end_stream [Boolean] indicates that no payload will be sent
     def headers(headers, end_headers: true, end_stream: false)

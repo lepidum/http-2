@@ -587,7 +587,7 @@ describe HTTP2::Stream do
     end
 
     it "should emit received headers via on(:headers)" do
-      headers, recv = {"header" => "value"}, nil
+      headers, recv = [["header", "value"]], nil
       @srv.on(:stream) do |stream|
         stream.on(:headers) {|h| recv = h}
       end
@@ -665,7 +665,7 @@ describe HTTP2::Stream do
         end
 
         it "client: headers > active > headers > .. > data > close" do
-          order, headers = [], {}
+          order, headers = [], []
           @client.on(:promise) do |push|
             order << :reserved
 
@@ -676,7 +676,7 @@ describe HTTP2::Stream do
 
             push.on(:headers) do |h|
               order << :headers
-              headers.merge!(h)
+              headers += h
             end
 
             push.id.should be_even
@@ -687,7 +687,7 @@ describe HTTP2::Stream do
             push.data("somedata")
           end
 
-          headers.should eq({"key" => "val", "key2" => "val2"})
+          headers.should eq([["key", "val"], ["key2", "val2"]])
           order.should eq [:reserved, :headers, :active, :headers,
                            :half_close, :data, :close]
         end

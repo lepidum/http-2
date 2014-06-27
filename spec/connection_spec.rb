@@ -87,6 +87,61 @@ describe HTTP2::Connection do
     end
   end
 
+  context "Headers pre/post processing" do
+    it "should concatenate multiple occurences of a header field with the same name" do
+      input = [
+        ["Content-Type", "text/html"],
+        ["Cache-Control", "max-age=60, private"],
+        ["Cache-Control", "must-revalidate"],
+      ]
+      expected = [
+        ["cache-control", "max-age=60, private\0must-revalidate"],
+        ["content-type", "text/html"],
+      ]
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers(input)
+
+      headers.size.should eq 1
+      emitted = Decompressor.new(:request).decode(headers.first[:payload])
+      emitted.should match_array(expected)
+    end
+
+    it "should split zero-concatenated header field values" do
+      input = [
+        ["cache-control", "max-age=60, private\0must-revalidate"],
+        ["content-type", "text/html"],
+        ["cookie", "a=b\0c=d; e=f"],
+      ]
+      expected = [
+        ["cache-control", ["max-age=60, private", "must-revalidate"]],
+        ["cookie", ["a=b; c=d; e=f"]],
+      ]
+
+      result = nil
+      @conn.on(:stream) do |stream|
+        stream.on(:headers) {|h| result = h}
+      end
+
+      srv = Server.new
+      srv.on(:frame) {|bytes| @conn << bytes}
+      stream = srv.new_stream
+      stream.headers(input)
+
+      puts result.inspect
+
+      result.size.should eq 4 # 2 cache-control, 1 cookie, 1 content-type
+      expected.each do |name, values|
+        result.select {|n, v| n == name}.map {|n, v| v}.should eq values
+      end
+    end
+  end
+
   context "flow control" do
     it "should initialize to default flow window" do
       @conn.window.should eq DEFAULT_FLOW_WINDOW
