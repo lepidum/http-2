@@ -330,14 +330,14 @@ describe HTTP2::Framer do
         type: :altsvc,
         stream: 1,
         max_age: 1402290402,	   # 4
-        port: 8080,		   # 2    reserved 1
-        proto: 'h2-12',		   # 1 + 5
+        port: 8080,		   # 2
+        proto: 'h2-13',		   # 1 + 5
         host: 'www.example.com',   # 1 + 15
         origin: 'www.example.com', # 15
       }
       bytes = f.generate(frame)
-      expected = [44, 0xa, 0, 1, 1402290402, 8080, 0].pack("nCCNNnC")
-      expected << [5, *'h2-12'.bytes].pack("CC*")
+      expected = [43, 0xa, 0, 1, 1402290402, 8080].pack("nCCNNn")
+      expected << [5, *'h2-13'.bytes].pack("CC*")
       expected << [15, *'www.example.com'.bytes].pack("CC*")
       expected << [*'www.example.com'.bytes].pack("C*")
       bytes.should eq expected
