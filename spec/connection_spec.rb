@@ -399,10 +399,11 @@ describe HTTP2::Connection do
   end
 
   context "connection management" do
-    xit "should raise error on invalid connection header" do
+    it "should raise error on invalid connection header" do
       srv = Server.new
-      expect { srv.dup << f.generate(SETTINGS) }.to raise_error(HandshakeError)
+      expect { srv << f.generate(SETTINGS) }.to raise_error(HandshakeError)
 
+      srv = Server.new
       expect {
         srv << CONNECTION_HEADER
         srv << f.generate(SETTINGS)
@@ -451,7 +452,7 @@ describe HTTP2::Connection do
       expect { @conn.new_stream }.to raise_error(ConnectionClosed)
     end
 
-    xit "should process connection management frames after GOAWAY" do
+    it "should process connection management frames after GOAWAY" do
       @conn << f.generate(SETTINGS)
       @conn << f.generate(HEADERS)
       @conn << f.generate(GOAWAY)
@@ -511,7 +512,7 @@ describe HTTP2::Connection do
       @conn.ping("somedata")
     end
 
-    xit ".goaway should generate GOAWAY frame with last processed stream ID" do
+    it ".goaway should generate GOAWAY frame with last processed stream ID" do
       @conn << f.generate(SETTINGS)
       @conn << f.generate(HEADERS.merge({stream: 17}))
 

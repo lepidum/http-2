@@ -63,7 +63,7 @@ describe HTTP2::Client do
      }.to raise_error(ProtocolError)
     end
 
-    xit "should emit stream object for received PUSH_PROMISE" do
+    it "should emit stream object for received PUSH_PROMISE" do
       s = @client.new_stream
       s.send HEADERS
 
@@ -75,7 +75,7 @@ describe HTTP2::Client do
       promise.state.should eq :reserved_remote
     end
 
-    xit "should auto RST_STREAM promises against locally-RST stream" do
+    it "should auto RST_STREAM promises against locally-RST stream" do
       s = @client.new_stream
       s.send HEADERS
       s.close
