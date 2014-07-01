@@ -488,7 +488,7 @@ module HTTP2
       # Returns current table size in octets
       # @return [Integer]
       def current_table_size
-        @table.join.bytesize + @table.size * 32
+        @table.inject(0){|r,(k,v)| r += k.bytesize + v.bytesize + 32 }
       end
 
       # To keep the header table size lower than or equal to @limit,
@@ -499,14 +499,14 @@ module HTTP2
       # @return [Boolean] whether +cmd+ fits in the header table.
       def size_check(cmd, &block)
         cursize = current_table_size
-        cmdsize = cmd.nil? ? 0 : cmd.join.bytesize + 32
+        cmdsize = cmd.nil? ? 0 : cmd[0].bytesize + cmd[1].bytesize + 32
 
         while cursize + cmdsize > @limit do
           break if @table.empty?
 
           last_index = @table.size - 1
           e = @table.pop
-          cursize -= e.join.bytesize + 32
+          cursize -= e[0].bytesize + e[1].bytesize + 32
 
           # Whenever an entry is evicted from the header table, any reference to
           # that entry contained by the reference set is removed.
