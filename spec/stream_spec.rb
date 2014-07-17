@@ -12,8 +12,8 @@ describe HTTP2::Stream do
     end
 
     it "should set custom stream priority" do
-      stream = @client.new_stream(priority: 3)
-      stream.priority.should eq 3
+      stream = @client.new_stream(weight: 3, dependency: 2, exclusive: true)
+      stream.weight.should eq 3
     end
 
     context "reserved (local)" do
@@ -56,7 +56,7 @@ describe HTTP2::Stream do
 
       it "should reprioritize stream on PRIORITY" do
         expect { @stream.receive PRIORITY }.to_not raise_error
-        # TODO: @stream.priority.should eq 15
+        @stream.weight.should eq 20
       end
     end
 
@@ -96,7 +96,7 @@ describe HTTP2::Stream do
 
       it "should reprioritize stream on PRIORITY" do
         expect { @stream.send PRIORITY }.to_not raise_error
-        # TODO: @stream.priority.should eq 15
+        @stream.weight.should eq 20
       end
     end
 
@@ -269,7 +269,7 @@ describe HTTP2::Stream do
 
       it "should reprioritize stream on PRIORITY" do
         expect { @stream.send PRIORITY }.to_not raise_error
-        # TODO: @stream.priority.should eq 15
+        @stream.weight.should eq 20
       end
 
       it "should emit :half_close event on transition" do
@@ -334,7 +334,7 @@ describe HTTP2::Stream do
 
       it "should reprioritize stream on PRIORITY" do
         expect { @stream.receive PRIORITY }.to_not raise_error
-        # TODO: @stream.priority.should eq 15
+        @stream.weight.should eq 20
       end
 
       it "should emit :half_close event on transition" do
@@ -395,7 +395,7 @@ describe HTTP2::Stream do
 
         it "should reprioritize stream on PRIORITY" do
           expect { @stream.receive PRIORITY }.to_not raise_error
-          # TODO: @stream.priority.should eq 15
+          @stream.weight.should eq 20
         end
 
       end
@@ -502,20 +502,20 @@ describe HTTP2::Stream do
   end
 
   context "client API" do
-    xit ".reprioritize should emit PRIORITY frame" do
+    it ".reprioritize should emit PRIORITY frame" do
       @stream.should_receive(:send) do |frame|
         frame[:type].should eq :priority
-        frame[:priority].should eq 30
+        frame[:weight].should eq 30
       end
 
-      @stream.reprioritize 30
+      @stream.reprioritize weight: 30
     end
 
     it ".reprioritize should raise error if invoked by server" do
       srv = Server.new
       stream = srv.new_stream
 
-      expect { stream.reprioritize(10) }.to raise_error(StreamError)
+      expect { stream.reprioritize(weight: 10) }.to raise_error(StreamError)
     end
 
     it ".headers should emit HEADERS frames" do
@@ -608,16 +608,21 @@ describe HTTP2::Stream do
       @client_stream.data(payload)
     end
 
-    xit "should emit received priority via on(:priority)" do
-      new_priority, recv = 15, 0
+    it "should emit received priority parameters via on(:priority)" do
+      new_weight, new_dependency = 15, @client_stream.id + 2
+      callback_called = false
       @srv.on(:stream) do |stream|
         stream.on(:priority) do |pri|
-          pri.should eq new_priority
+          callback_called = true
+          pri.is_a?(Hash).should be
+          pri[:weight].should eq new_weight
+          pri[:dependency].should eq new_dependency
         end
       end
 
       @client_stream.headers({"key" => "value"})
-      @client_stream.reprioritize(new_priority)
+      @client_stream.reprioritize(weight: new_weight, dependency: new_dependency)
+      callback_called.should be
     end
 
     context "push" do

@@ -34,7 +34,7 @@ PRIORITY = {
   stream: 1,
   exclusive: false,
   stream_dependency: 0,
-  weight: 16,
+  weight: 20,
 }
 
 RST_STREAM = {

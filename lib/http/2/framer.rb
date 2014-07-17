@@ -170,7 +170,10 @@ module HTTP2
         length += frame[:payload].bytesize
 
       when :headers
-        if frame[:priority]
+        if frame[:weight] || frame[:stream_dependency] || !frame[:exclusive].nil?
+          unless frame[:weight] && frame[:stream_dependency] && !frame[:exclusive].nil?
+            raise CompressionError.new("Must specify all of priority parameters for #{frame[:type]}")
+          end
           frame[:flags] += [:priority] if !frame[:flags].include? :priority
         end
 
@@ -185,6 +188,9 @@ module HTTP2
         length += frame[:payload].bytesize
 
       when :priority
+        unless frame[:weight] && frame[:stream_dependency] && !frame[:exclusive].nil?
+          raise CompressionError.new("Must specify all of priority parameters for #{frame[:type]}")
+        end
         bytes << [(frame[:exclusive] ? EBIT : 0) |
                   (frame[:stream_dependency] & RBIT)].pack(UINT32)
         bytes << [frame[:weight] - 1].pack(UINT8)

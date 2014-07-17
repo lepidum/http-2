@@ -89,7 +89,7 @@ describe HTTP2::Framer do
       frame = {
         length: 16,
         type: :headers,
-        flags: [:end_headers, :priority],
+        flags: [:end_headers],
         stream: 1,
         stream_dependency: 15,
         weight: 12,

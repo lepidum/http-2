@@ -74,16 +74,18 @@ describe HTTP2::Connection do
       expect { @conn.new_stream }.to raise_error(StreamLimitExceeded)
     end
 
-    xit "should initialize stream with HEADERS priority value" do
+    it "should initialize stream with HEADERS priority value" do
       @conn << f.generate(SETTINGS)
 
       stream, headers = nil, HEADERS.dup
-      headers[:priority] = 20
+      headers[:weight] = 20
+      headers[:stream_dependency] = 0
+      headers[:exclusive] = false
 
       @conn.on(:stream) {|s| stream = s }
       @conn << f.generate(headers)
 
-      stream.priority.should eq 20
+      stream.weight.should eq 20
     end
   end
 
