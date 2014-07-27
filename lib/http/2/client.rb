@@ -20,11 +20,11 @@ module HTTP2
   class Client < Connection
 
     # Initialize new HTTP 2.0 client object.
-    def initialize(*args)
+    def initialize(**args)
       @stream_id    = 1
       @state        = :connection_header
-      @compressor   = Header::Compressor.new(:request)
-      @decompressor = Header::Decompressor.new(:response)
+      @compressor   = Header::Compressor.new(:request, args)
+      @decompressor = Header::Decompressor.new(:response, args)
 
       super
     end
