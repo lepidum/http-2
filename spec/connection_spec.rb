@@ -26,12 +26,12 @@ describe HTTP2::Connection do
 
   context "stream management" do
     it "should initialize to default stream limit (100)" do
-      @conn.stream_limit.should eq 100
+      @conn.settings_value[:settings_max_concurrent_streams].should eq 100
     end
 
     it "should change stream limit to received SETTINGS value" do
       @conn << f.generate(SETTINGS)
-      @conn.stream_limit.should eq 10
+      @conn.settings_value[:settings_max_concurrent_streams].should eq 10
     end
 
     it "should count open streams against stream limit" do
@@ -78,12 +78,69 @@ describe HTTP2::Connection do
       @conn << f.generate(SETTINGS)
 
       stream, headers = nil, HEADERS.dup
-      headers[:priority] = 20
+      headers[:weight] = 20
+      headers[:stream_dependency] = 0
+      headers[:exclusive] = false
 
       @conn.on(:stream) {|s| stream = s }
       @conn << f.generate(headers)
 
-      stream.priority.should eq 20
+      stream.weight.should eq 20
+    end
+  end
+
+  context "Headers pre/post processing" do
+    it "should concatenate multiple occurences of a header field with the same name" do
+      input = [
+        ["Content-Type", "text/html"],
+        ["Cache-Control", "max-age=60, private"],
+        ["Cache-Control", "must-revalidate"],
+      ]
+      expected = [
+        ["cache-control", "max-age=60, private\0must-revalidate"],
+        ["content-type", "text/html"],
+      ]
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers(input)
+
+      headers.size.should eq 1
+      emitted = Decompressor.new(:request).decode(headers.first[:payload])
+      emitted.should match_array(expected)
+    end
+
+    it "should split zero-concatenated header field values" do
+      input = [
+        ["cache-control", "max-age=60, private\0must-revalidate"],
+        ["content-type", "text/html"],
+        ["cookie", "a=b\0c=d; e=f"],
+      ]
+      expected = [
+        ["cache-control", ["max-age=60, private", "must-revalidate"]],
+        ["cookie", ["a=b; c=d; e=f"]],
+      ]
+
+      result = nil
+      @conn.on(:stream) do |stream|
+        stream.on(:headers) {|h| result = h}
+      end
+
+      srv = Server.new
+      srv.on(:frame) {|bytes| @conn << bytes}
+      stream = srv.new_stream
+      stream.headers(input)
+
+      puts result.inspect
+
+      result.size.should eq 4 # 2 cache-control, 1 cookie, 1 content-type
+      expected.each do |name, values|
+        result.select {|n, v| n == name}.map {|n, v| v}.should eq values
+      end
     end
   end
 
@@ -94,7 +151,7 @@ describe HTTP2::Connection do
 
     it "should update connection and stream windows on SETTINGS" do
       settings, data = SETTINGS.dup, DATA.dup
-      settings[:payload] = { settings_initial_window_size: 1024 }
+      settings[:payload] = [[:settings_initial_window_size, 1024]]
       data[:payload] = 'x'*2048
 
       stream = @conn.new_stream
@@ -111,29 +168,15 @@ describe HTTP2::Connection do
 
     it "should initialize streams with window specified by peer" do
       settings = SETTINGS.dup
-      settings[:payload] = { settings_initial_window_size: 1024 }
+      settings[:payload] = [[:settings_initial_window_size, 1024]]
 
       @conn << f.generate(settings)
       @conn.new_stream.window.should eq 1024
     end
 
-    it "should support global disable of flow control" do
-      @conn << f.generate(SETTINGS)
-      @conn.window.should eq Float::INFINITY
-    end
-
-    it "should raise error on flow control after disabling it" do
-      expect { @conn << f.generate(SETTINGS) }.to_not raise_error
-      expect {
-        [WINDOW_UPDATE, SETTINGS].each do |frame|
-          @conn.dup << f.generate(frame)
-        end
-      }.to raise_error(FlowControlError)
-    end
-
     it "should observe connection flow control" do
       settings, data = SETTINGS.dup, DATA.dup
-      settings[:payload] = { settings_initial_window_size: 1000 }
+      settings[:payload] = [[:settings_initial_window_size, 1000]]
 
       @conn << f.generate(settings)
       s1 = @conn.new_stream
@@ -157,7 +200,7 @@ describe HTTP2::Connection do
   context "framing" do
     it "should buffer incomplete frames" do
       settings = SETTINGS.dup
-      settings[:payload] = { settings_initial_window_size: 1000 }
+      settings[:payload] = [[:settings_initial_window_size, 1000]]
       @conn << f.generate(settings)
 
       frame = f.generate(WINDOW_UPDATE.merge({stream: 0, increment: 1000}))
@@ -197,11 +240,14 @@ describe HTTP2::Connection do
 
       cc = Compressor.new(:response)
       h1, h2 = HEADERS.dup, CONTINUATION.dup
-      h1[:payload] = cc.encode([req_headers.first])
+
+      # Header block fragment might not complete for decompression
+      payload = cc.encode(req_headers)
+      h1[:payload] = payload.slice!(0, payload.size/2) # first half
       h1[:stream] = 5
       h1[:flags] = []
 
-      h2[:payload] = cc.encode([req_headers.last])
+      h2[:payload] = payload # the remaining
       h2[:stream] = 5
 
       @conn << f.generate(SETTINGS)
@@ -235,46 +281,131 @@ describe HTTP2::Connection do
       }.to raise_error(CompressionError)
     end
 
-    it "should raise connection error on decode exception" do
-      @conn << f.generate(SETTINGS)
-      frame = f.generate(HEADERS.dup)
-      frame[1] = 0.chr
-
-      expect { @conn << frame }.to raise_error(ProtocolError)
-    end
-
     it "should emit encoded frames via on(:frame)" do
       bytes = nil
       @conn.on(:frame) {|d| bytes = d }
-      @conn.settings(stream_limit: 10, window_limit: Float::INFINITY)
+      @conn.settings(settings_max_concurrent_streams: 10,
+                     settings_initial_window_size: 0x7fffffff)
 
       bytes.should eq f.generate(SETTINGS)
     end
 
     it "should compress stream headers" do
-      @conn.ping("12345678")
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
         bytes.should_not match('get')
         bytes.should_not match('http')
-        bytes.should match('www.example.org')
+        bytes.should_not match('www.example.org') # huffman
       end
 
       stream = @conn.new_stream
       stream.headers({
         ':method' => 'get',
         ':scheme' => 'http',
-        ':host'   => 'www.example.org',
+        ':authority' => 'www.example.org',
         ':path'   => '/resource'
       })
+    end
+
+    it "should generate CONTINUATION if HEADERS is too long" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 44000,
+      }, end_stream: true)
+      headers.size.should eq 3
+      headers[0][:type].should eq :headers
+      headers[1][:type].should eq :continuation
+      headers[2][:type].should eq :continuation
+      headers[0][:flags].should eq [:end_stream]
+      headers[1][:flags].should eq []
+      headers[2][:flags].should eq [:end_headers]
+    end
+
+    it "should not generate CONTINUATION if HEADERS fits exactly in a frame" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers.size.should eq 1
+      headers[0][:type].should eq :headers
+      headers[0][:flags].should include(:end_headers)
+      headers[0][:flags].should include(:end_stream)
+    end
+
+    it "should not generate CONTINUATION if HEADERS fits exactly in a frame" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers.size.should eq 1
+      headers[0][:type].should eq :headers
+      headers[0][:flags].should include(:end_headers)
+      headers[0][:flags].should include(:end_stream)
+    end
+
+    it "should generate CONTINUATION if HEADERS exceed the max payload by one byte" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers[1][:length].should eq 1
+      headers.size.should eq 2
+      headers[0][:type].should eq :headers
+      headers[1][:type].should eq :continuation
+      headers[0][:flags].should eq [:end_stream]
+      headers[1][:flags].should eq [:end_headers]
     end
   end
 
   context "connection management" do
     it "should raise error on invalid connection header" do
       srv = Server.new
-      expect { srv.dup << f.generate(SETTINGS) }.to raise_error(HandshakeError)
+      expect { srv << f.generate(SETTINGS) }.to raise_error(HandshakeError)
 
+      srv = Server.new
       expect {
         srv << CONNECTION_HEADER
         srv << f.generate(SETTINGS)
@@ -285,7 +416,7 @@ describe HTTP2::Connection do
       @conn << f.generate(SETTINGS)
       @conn.should_receive(:send) do |frame|
         frame[:type].should eq :ping
-        frame[:flags].should eq [:pong]
+        frame[:flags].should eq [:ack]
         frame[:payload].should eq "12345678"
       end
 
@@ -344,14 +475,17 @@ describe HTTP2::Connection do
     it "should send GOAWAY frame on connection error" do
       stream = @conn.new_stream
 
-      @conn.stub(:encode)
+      @conn.should_receive(:encode) do |frame|
+        frame[:type].should eq :settings
+        [frame]
+      end
       @conn.should_receive(:encode) do |frame|
         frame[:type].should eq :goaway
         frame[:last_stream].should eq stream.id
         frame[:error].should eq :protocol_error
+        [frame]
       end
 
-      @conn << f.generate(SETTINGS)
       expect { @conn << f.generate(DATA) }.to raise_error(ProtocolError)
     end
   end
@@ -360,14 +494,15 @@ describe HTTP2::Connection do
     it ".settings should emit SETTINGS frames" do
       @conn.should_receive(:send) do |frame|
         frame[:type].should eq :settings
-        frame[:payload].should eq({
-          settings_max_concurrent_streams: 10,
-          settings_flow_control_options: 1
-        })
+        frame[:payload].should eq([
+          [:settings_max_concurrent_streams, 10],
+          [:settings_initial_window_size, 0x7fffffff],
+        ])
         frame[:stream].should eq 0
       end
 
-      @conn.settings(stream_limit: 10, window_limit: Float::INFINITY)
+      @conn.settings(settings_max_concurrent_streams: 10,
+                     settings_initial_window_size: 0x7fffffff)
     end
 
     it ".ping should generate PING frames" do

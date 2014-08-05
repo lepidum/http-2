@@ -24,7 +24,7 @@ module HTTP2
   #   |      |      ,-------|:active |-------.      |      |
   #   |      | H   /   ES   |        |   ES   \   H |      |
   #   |      v    v         +--------+         v    v      |
-  #   |   +-----------+          |          +-_---------+  |
+  #   |   +-----------+          |          +-----------+  |
   #   |   |:half_close|          |          |:half_close|  |
   #   |   |  (remote) |          |          |  (local)  |  |
   #   |   +-----------+          |          +-----------+  |
@@ -49,7 +49,8 @@ module HTTP2
     attr_reader :parent
 
     # Stream priority as set by initiator.
-    attr_reader :priority
+    attr_reader :weight
+    attr_reader :dependency
 
     # Size of current stream flow control window.
     attr_reader :window
@@ -64,12 +65,16 @@ module HTTP2
     # will emit new stream objects, when new stream frames are received.
     #
     # @param id [Integer]
-    # @param priority [Integer]
+    # @param weight [Integer]
+    # @param dependency [Integer]
+    # @param exclusive [Boolean]
     # @param window [Integer]
     # @param parent [Stream]
-    def initialize(id, priority, window, parent = nil)
+    def initialize(id:, weight: 16, dependency: 0, exclusive: false, window:, parent: nil)
       @id = id
-      @priority = priority
+      @weight = weight
+      @dependency = dependency
+      process_priority({weight: weight, stream_dependency: dependency, exclusive: exclusive})
       @window = window
       @parent = parent
       @state  = :idle
@@ -90,17 +95,14 @@ module HTTP2
       when :data
         emit(:data, frame[:payload]) if !frame[:ignore]
       when :headers, :push_promise
-        if frame[:payload].is_a? Array
-          emit(:headers, Hash[*frame[:payload].flatten]) if !frame[:ignore]
-        else
-          emit(:headers, frame[:payload]) if !frame[:ignore]
-        end
+        emit(:headers, frame[:payload]) if !frame[:ignore]
       when :priority
-        @priority = frame[:priority]
-        emit(:priority, @priority)
+        process_priority(frame)
       when :window_update
         @window += frame[:increment]
         send_data
+      when :altsvc, :blocked
+        emit(frame[:type], frame)
       end
 
       complete_transition(frame)
@@ -116,7 +118,7 @@ module HTTP2
       transition(frame, true)
       frame[:stream] ||= @id
 
-      @priority = frame[:priority] if frame[:type] == :priority
+      process_priority(frame) if frame[:type] == :priority
 
       if frame[:type] == :data
         send_data(frame)
@@ -129,7 +131,7 @@ module HTTP2
 
     # Sends a HEADERS frame containing HTTP response headers.
     #
-    # @param headers [Hash]
+    # @param headers [Array or Hash] Array of key-value pairs or Hash
     # @param end_headers [Boolean] indicates that no more headers will be sent
     # @param end_stream [Boolean] indicates that no payload will be sent
     def headers(headers, end_headers: true, end_stream: false)
@@ -140,20 +142,21 @@ module HTTP2
       send({type: :headers, flags: flags, payload: headers.to_a})
     end
 
-    def promise(headers, end_push_promise: true, &block)
+    def promise(headers, end_headers: true, &block)
       raise Exception.new("must provide callback") if !block_given?
 
-      flags = end_push_promise ? [:end_push_promise] : []
+      flags = end_headers ? [:end_headers] : []
       emit(:promise, self, headers, flags, &block)
     end
 
     # Sends a PRIORITY frame with new stream priority value (can only be
     # performed by the client).
     #
-    # @param p [Integer] new stream priority value
-    def reprioritize(p)
+    # @param weight [Integer] new stream weight value
+    # @param dependency [Integer] new stream dependency stream
+    def reprioritize(weight: 16, dependency: 0, exclusive: false)
       stream_error if @id.even?
-      send({type: :priority, priority: p})
+      send({type: :priority, weight: weight, stream_dependency: dependency, exclusive: exclusive})
     end
 
     # Sends DATA frame containing response payload.
@@ -344,8 +347,11 @@ module HTTP2
       # frame bearing the END_STREAM flag is sent.
       when :half_closed_local
         if sending
-          if frame[:type] == :rst_stream
+          case frame[:type]
+          when :rst_stream
             event(:local_rst)
+          when :priority
+            process_priority(frame)
           else
             stream_error
           end
@@ -354,7 +360,9 @@ module HTTP2
           when :data, :headers, :continuation
             event(:remote_closed) if end_stream?(frame)
           when :rst_stream then event(:remote_rst)
-          when :window_update, :priority
+          when :priority
+            process_priority(frame)
+          when :window_update
             frame[:ignore] = true
           end
         end
@@ -380,6 +388,8 @@ module HTTP2
           case frame[:type]
           when :rst_stream then event(:remote_rst)
           when :window_update then frame[:ignore] = true
+          when :priority
+            process_priority(frame)
           else stream_error(:stream_closed); end
         end
 
@@ -407,15 +417,21 @@ module HTTP2
         if sending
           case frame[:type]
           when :rst_stream then # ignore
+          when :priority   then
+            process_priority(frame)
           else
             stream_error(:stream_closed) if !(frame[:type] == :rst_stream)
           end
         else
-          case @closed
-          when :remote_rst, :remote_closed
-            stream_error(:stream_closed) if !(frame[:type] == :rst_stream)
-          when :local_rst, :local_closed
-            frame[:ignore] = true
+          if frame[:type] == :priority
+            process_priority(frame)
+          else
+            case @closed
+            when :remote_rst, :remote_closed
+              stream_error(:stream_closed) if !(frame[:type] == :rst_stream)
+            when :local_rst, :local_closed
+              frame[:ignore] = true
+            end
           end
         end
       end
@@ -455,6 +471,16 @@ module HTTP2
       end
     end
 
+    def process_priority(frame)
+      @weight = frame[:weight]
+      @dependency = frame[:stream_dependency]
+      emit(:priority,
+           weight:      frame[:weight],
+           dependency:  frame[:stream_dependency],
+           exclusive:   frame[:exclusive])
+      # TODO: implement dependency tree housekeeping
+    end
+
     def end_stream?(frame)
       case frame[:type]
       when :data, :headers, :continuation
@@ -469,6 +495,5 @@ module HTTP2
       klass = error.to_s.split('_').map(&:capitalize).join
       raise Error.const_get(klass).new(msg)
     end
-
   end
 end

@@ -54,8 +54,8 @@ module HTTP2
           sent = frame_size
         end
 
-        frame = encode(frame) if encode
-        emit(:frame, frame)
+        frames = encode ? encode(frame) : [frame]
+        frames.each {|f| emit(:frame, f) }
         @window -= sent
       end
     end

@@ -3,7 +3,7 @@ module HTTP2
   # Implementation of header compression for HTTP 2.0 (HPACK) format adapted
   # to efficiently represent HTTP headers in the context of HTTP 2.0.
   #
-  # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07
+  # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08
   module Header
 
     BINARY = 'binary'
@@ -17,7 +17,7 @@ module HTTP2
 
       # @private
       # Static table
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#appendix-B
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08#appendix-B
       STATIC_TABLE = [
         [':authority',                  ''            ],
         [':method',                     'GET'         ],
@@ -34,7 +34,7 @@ module HTTP2
         [':status',                     '404'         ],
         [':status',                     '500'         ],
         ['accept-charset',              ''            ],
-        ['accept-encoding',             ''            ],
+        ['accept-encoding',             'gzip, deflate' ],
         ['accept-language',             ''            ],
         ['accept-ranges',               ''            ],
         ['accept',                      ''            ],
@@ -162,7 +162,7 @@ module HTTP2
       end
 
       # Performs differential coding based on provided command type.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-3.2.1
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08#section-4.1
       #
       # @param cmd [Hash] { type:, name:, value:, index: }
       # @yield [refset_entry, table_entry] called when a refset entry is evicted
@@ -176,10 +176,7 @@ module HTTP2
           @refset.clear
 
         when :changetablesize
-          # TODO: implement
-          @limit = cmd[:name]
-          size_check(nil)
-          # TODO: expect and verify refset emptying on next
+          set_table_size(cmd[:name])
 
         when :indexed
           # Indexed Representation
@@ -461,6 +458,13 @@ module HTTP2
         { type: :refsetempty }
       end
 
+      # Alter header table size.
+      #  When the size is reduced, some headers might be evicted.
+      def set_table_size(size)
+        @limit = size
+        size_check(nil)
+      end
+
       private
 
       # Add a name-value pair to the header table.
@@ -561,7 +565,7 @@ module HTTP2
       end
 
       # Encodes provided value via integer representation.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-4.1.1
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08#section-6.1
       #
       #  If I < 2^N - 1, encode I on N bits
       #  Else
@@ -593,7 +597,7 @@ module HTTP2
       end
 
       # Encodes provided value via string literal representation.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-4.1.2
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08#section-6.2
       #
       # * The string length, defined as the number of bytes needed to store
       #   its UTF-8 representation, is represented as an integer with a seven
@@ -633,7 +637,6 @@ module HTTP2
       end
 
       # Encodes header command with appropriate header representation.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-07#section-4
       #
       # @param h [Hash] header command
       # @param buffer [String]

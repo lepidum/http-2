@@ -19,7 +19,7 @@ HEADERS = {
   type: :headers,
   flags: [:end_headers],
   stream: 1,
-  payload: 'header-block'
+  payload: Compressor.new(:request).encode([['a','b']])
 }
 
 HEADERS_END_STREAM = {
@@ -32,7 +32,9 @@ HEADERS_END_STREAM = {
 PRIORITY = {
   type: :priority,
   stream: 1,
-  priority: 15
+  exclusive: false,
+  stream_dependency: 0,
+  weight: 20,
 }
 
 RST_STREAM = {
@@ -44,18 +46,18 @@ RST_STREAM = {
 SETTINGS = {
   type: :settings,
   stream: 0,
-  payload: {
-    settings_max_concurrent_streams: 10,
-    settings_flow_control_options: 1
-  }
+  payload: [
+    [:settings_max_concurrent_streams, 10],
+    [:settings_initial_window_size, 0x7fffffff],
+  ]
 }
 
 PUSH_PROMISE = {
   type: :push_promise,
-  flags: [:end_push_promise],
+  flags: [:end_headers],
   stream: 1,
   promise_stream: 2,
-  payload: 'headers'
+  payload: Compressor.new(:request).encode([['a','b']])
 }
 
 PING = {
@@ -67,7 +69,7 @@ PING = {
 PONG = {
   stream: 0,
   type: :ping,
-  flags: [:pong],
+  flags: [:ack],
   payload: '12345678'
 }
 
@@ -89,9 +91,18 @@ CONTINUATION = {
   payload: '-second-block'
 }
 
+ALTSVC = {
+  type: :altsvc,
+  max_age: 1402290402,          # 4
+  port: 8080,                   # 2    reserved 1
+  proto: 'h2-12',               # 1 + 5
+  host: 'www.example.com',      # 1 + 15
+  origin: 'www.example.com',    # 15
+}
+
 FRAME_TYPES = [
   DATA, HEADERS, PRIORITY, RST_STREAM, SETTINGS, PUSH_PROMISE,
-  PING, GOAWAY, WINDOW_UPDATE, CONTINUATION
+  PING, GOAWAY, WINDOW_UPDATE, CONTINUATION, ALTSVC
 ]
 
 def set_stream_id(bytes, id)

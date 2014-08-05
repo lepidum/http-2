@@ -31,7 +31,7 @@ loop do
 
   conn = HTTP2::Server.new
   conn.on(:frame) do |bytes|
-    puts "Writing bytes: #{bytes.inspect}"
+    puts "Writing bytes: #{bytes.unpack("H*").first}"
     sock.write bytes
   end
 
@@ -43,7 +43,7 @@ loop do
     stream.on(:close)  { log.info "stream closed" }
 
     stream.on(:headers) do |h|
-      req = h
+      req = Hash[*h.flatten]
       log.info "request headers: #{h}"
     end
 
@@ -56,7 +56,7 @@ loop do
       log.info "client closed its end of the stream"
 
       response = nil
-      if req[":method"] == "post"
+      if req[":method"] == "POST"
         log.info "Received POST request, payload: #{buffer}"
         response = "Hello HTTP 2.0! POST payload: #{buffer}"
       else

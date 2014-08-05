@@ -16,8 +16,8 @@ Pure ruby, framework and transport agnostic implementation of [HTTP 2.0 protocol
 
 Current implementation (see [HPBN chapter for HTTP 2.0 overview](http://chimera.labs.oreilly.com/books/1230000000545/ch12.html)), is based on:
 
-* [draft-ietf-httpbis-http2-06](http://tools.ietf.org/html/draft-ietf-httpbis-http2-06)
-* [draft-ietf-httpbis-header-compression-03](http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-03)
+* [draft-ietf-httpbis-http2-13](http://tools.ietf.org/html/draft-ietf-httpbis-http2-13)
+* [draft-ietf-httpbis-header-compression-08](http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08)
 
 _Note: the underlying specifications are still evolving, expect APIs to change and evolve also..._
 
@@ -221,11 +221,12 @@ stream.window              # check current window size
 stream.window_update(2048) # increment stream window by 2048 bytes
 ```
 
-Alternatively, flow control can be disabled by emitting an appropriate settings frame on the connection:
+Flow control cannot be disabled.  You can set window size to 2**31-1 and it effectively works no-flow-control mode.
 
 ```ruby
 # limit number of concurrent streams to 100 and disable flow control
-conn.settings(streams: 100, window: Float::INFINITY)
+conn.settings(settings_max_concurrent_streams: 100,
+              settings_initial_window_size: 0x7fffffff)
 ```
 
 ### Server push
@@ -279,7 +280,7 @@ end
 The client can cancel any given push stream (via `.close`), or disable server push entirely by sending the appropriate settings frame (note that below setting only impacts server > client direction):
 
 ```ruby
-client.settings(streams: 0) # setting max limit to 0 disables server push
+client.settings(settings_enable_push: 0) # setting max limit to 0 disables server push
 ```
 
 ### License

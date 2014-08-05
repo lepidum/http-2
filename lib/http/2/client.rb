@@ -20,11 +20,11 @@ module HTTP2
   class Client < Connection
 
     # Initialize new HTTP 2.0 client object.
-    def initialize(*args)
+    def initialize(**args)
       @stream_id    = 1
       @state        = :connection_header
-      @compressor   = Header::Compressor.new(:request)
-      @decompressor = Header::Decompressor.new(:response)
+      @compressor   = Header::Compressor.new(:request, args)
+      @decompressor = Header::Decompressor.new(:response, args)
 
       super
     end
@@ -37,10 +37,11 @@ module HTTP2
     # @param frame [Hash]
     def send(frame)
       if @state == :connection_header
-        emit(:frame, CONNECTION_HEADER)
         @state = :connected
+        emit(:frame, CONNECTION_HEADER)
 
-        settings(stream_limit: @stream_limit, window_limit: @window_limit)
+        payload = @settings.select {|k,v| v != SPEC_DEFAULT_CONNECTIONS_SETTINGS[k]}
+        settings(payload)
       end
 
       super(frame)
