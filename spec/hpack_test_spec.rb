@@ -4,15 +4,15 @@ require 'json'
 describe HTTP2::Header do
   folders = %w[
     #go-hpack
-    #haskell-http2-diff
-    #haskell-http2-diff-huffman
-    #haskell-http2-linear
-    #haskell-http2-linear-huffman
-    #haskell-http2-naive
-    #haskell-http2-naive-huffman
-    #haskell-http2-static
-    #haskell-http2-static-huffman
-    hyper-hpack
+    haskell-http2-diff
+    haskell-http2-diff-huffman
+    haskell-http2-linear
+    haskell-http2-linear-huffman
+    haskell-http2-naive
+    haskell-http2-naive-huffman
+    haskell-http2-static
+    haskell-http2-static-huffman
+    #hyper-hpack
     nghttp2
     nghttp2-16384-4096
     nghttp2-change-table-size
@@ -21,6 +21,7 @@ describe HTTP2::Header do
 
   context "Decompressor" do
     folders.each do |folder|
+      next if folder =~ /#/
       path = File.expand_path("hpack-test-case/#{folder}", File.dirname(__FILE__))
       Dir.exists?(path) or next
       context "#{folder}" do
@@ -35,8 +36,14 @@ describe HTTP2::Header do
             cases.each do |c|
               wire = [c['wire']].pack("H*").force_encoding('binary')
               @emitted = @dc.decode(HTTP2::Buffer.new(wire))
-              expected = c['headers'].flat_map(&:to_a)
-              Set[*@emitted].should eq Set[*expected]
+              headers = c['headers'].flat_map(&:to_a)
+
+              # pseudo headers should appear first
+              pseudo, regular = [], []
+              headers.each {|(hk,hv)| (hk[0] == ':' ? pseudo : regular) << [hk, hv] }
+              expected = pseudo + regular
+
+              @emitted.should eq expected
             end
           end
         end
@@ -46,14 +53,14 @@ describe HTTP2::Header do
 
   context "Compressor" do
     %w[
-      DIFF
       LINEAR
       NAIVE
       SHORTER
       STATIC
     ].each do |mode|
+      next if mode =~ /#/
       ['', 'H'].each do |huffman|
-        [4096, 16384, 512].each do |table_size|
+        [4096, 512].each do |table_size|
           context "with #{mode}#{huffman} mode and table_size #{table_size}" do
             options = eval("HTTP2::Header::#{mode}#{huffman}")
             path = File.expand_path("hpack-test-case/raw-data", File.dirname(__FILE__))
@@ -69,7 +76,13 @@ describe HTTP2::Header do
                   headers = c['headers'].flat_map(&:to_a)
                   wire = @cc.encode(headers)
                   decoded = @dc.decode(HTTP2::Buffer.new(wire))
-                  Set[*headers].should eq Set[*decoded]
+
+                  # pseudo headers should appear first
+                  pseudo, regular = [], []
+                  headers.each {|(hk,hv)| (hk[0] == ':' ? pseudo : regular) << [hk, hv] }
+                  expected = pseudo + regular
+
+                  decoded.should eq expected
                 end
               end
             end
