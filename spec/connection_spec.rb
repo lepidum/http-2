@@ -74,16 +74,18 @@ describe HTTP2::Connection do
       expect { @conn.new_stream }.to raise_error(StreamLimitExceeded)
     end
 
-    xit "should initialize stream with HEADERS priority value" do
+    it "should initialize stream with HEADERS priority value" do
       @conn << f.generate(SETTINGS)
 
       stream, headers = nil, HEADERS.dup
-      headers[:priority] = 20
+      headers[:weight] = 20
+      headers[:stream_dependency] = 0
+      headers[:exclusive] = false
 
       @conn.on(:stream) {|s| stream = s }
       @conn << f.generate(headers)
 
-      stream.priority.should eq 20
+      stream.weight.should eq 20
     end
   end
 
@@ -399,10 +401,11 @@ describe HTTP2::Connection do
   end
 
   context "connection management" do
-    xit "should raise error on invalid connection header" do
+    it "should raise error on invalid connection header" do
       srv = Server.new
-      expect { srv.dup << f.generate(SETTINGS) }.to raise_error(HandshakeError)
+      expect { srv << f.generate(SETTINGS) }.to raise_error(HandshakeError)
 
+      srv = Server.new
       expect {
         srv << CONNECTION_HEADER
         srv << f.generate(SETTINGS)
@@ -413,14 +416,14 @@ describe HTTP2::Connection do
       @conn << f.generate(SETTINGS)
       @conn.should_receive(:send) do |frame|
         frame[:type].should eq :ping
-        frame[:flags].should eq [:pong]
+        frame[:flags].should eq [:ack]
         frame[:payload].should eq "12345678"
       end
 
       @conn << f.generate(PING)
     end
 
-    xit "should fire callback on PONG" do
+    it "should fire callback on PONG" do
       @conn << f.generate(SETTINGS)
 
       pong = nil
@@ -451,7 +454,7 @@ describe HTTP2::Connection do
       expect { @conn.new_stream }.to raise_error(ConnectionClosed)
     end
 
-    xit "should process connection management frames after GOAWAY" do
+    it "should process connection management frames after GOAWAY" do
       @conn << f.generate(SETTINGS)
       @conn << f.generate(HEADERS)
       @conn << f.generate(GOAWAY)
@@ -511,7 +514,7 @@ describe HTTP2::Connection do
       @conn.ping("somedata")
     end
 
-    xit ".goaway should generate GOAWAY frame with last processed stream ID" do
+    it ".goaway should generate GOAWAY frame with last processed stream ID" do
       @conn << f.generate(SETTINGS)
       @conn << f.generate(HEADERS.merge({stream: 17}))
 

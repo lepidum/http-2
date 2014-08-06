@@ -35,13 +35,13 @@ describe HTTP2::Server do
     end
   end
 
-  xit "should allow server push" do
+  it "should allow server push" do
     client = Client.new
     client.on(:frame) { |bytes| @srv << bytes }
 
     @srv.on(:stream) do |stream|
       expect {
-        stream.promise({}) {}
+        stream.promise(':method' => 'GET') {}
       }.to_not raise_error
     end
 

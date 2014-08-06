@@ -27,7 +27,7 @@ module HTTP2
   }.freeze
 
   # Default stream priority (lower values are higher priority).
-  DEFAULT_PRIORITY    = 2**30
+  DEFAULT_WEIGHT    = 16
 
   # Default connection "fast-fail" preamble string as defined by the spec.
   CONNECTION_HEADER   = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -82,11 +82,11 @@ module HTTP2
     # @param priority [Integer]
     # @param window [Integer]
     # @param parent [Stream]
-    def new_stream(priority: DEFAULT_PRIORITY, parent: nil)
+    def new_stream(**args)
       raise ConnectionClosed.new if @state == :closed
       raise StreamLimitExceeded.new if @active_stream_count == @settings[:settings_max_concurrent_streams]
 
-      stream = activate_stream(@stream_id, priority, parent)
+      stream = activate_stream(id: @stream_id, **args)
       @stream_id += 2
 
       stream
@@ -210,8 +210,10 @@ module HTTP2
 
             stream = @streams[frame[:stream]]
             if stream.nil?
-              stream = activate_stream(frame[:stream],
-                                       frame[:priority] || DEFAULT_PRIORITY)
+              stream = activate_stream(id:         frame[:stream],
+                                       weight:     frame[:weight]     || DEFAULT_WEIGHT,
+                                       dependency: frame[:dependency] || 0,
+                                       exclusive:  frame[:exclusive]  || false)
               emit(:stream, stream)
             end
 
@@ -258,7 +260,7 @@ module HTTP2
               end
             end
 
-            stream = activate_stream(pid, DEFAULT_PRIORITY, parent)
+            stream = activate_stream(id: pid, parent: parent)
             emit(:promise, stream)
             stream << frame
           else
@@ -353,12 +355,12 @@ module HTTP2
           @window += frame[:increment]
           send_data(nil, true)
         when :ping
-          if frame[:flags].include? :pong
+          if frame[:flags].include? :ack
             emit(:pong, frame[:payload])
           else
             send({
               type: :ping, stream: 0,
-              flags: [:pong], payload: frame[:payload]
+              flags: [:ack], payload: frame[:payload]
             })
           end
         when :goaway
@@ -538,12 +540,12 @@ module HTTP2
     # @param priority [Integer]
     # @param window [Integer]
     # @param parent [Stream]
-    def activate_stream(id, priority, parent = nil)
+    def activate_stream(id: nil, **args)
       if @streams.key?(id)
         connection_error(msg: 'Stream ID already exists')
       end
 
-      stream = Stream.new(id, priority, @window_limit, parent)
+      stream = Stream.new({id: id, window: @window_limit}.merge(args))
 
       # Streams that are in the "open" state, or either of the "half closed"
       # states count toward the maximum number of streams that an endpoint is
