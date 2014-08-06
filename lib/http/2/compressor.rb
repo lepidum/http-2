@@ -563,7 +563,7 @@ module HTTP2
       def decode(buf)
         list = []
         list << @cc.process(header(buf)) while !buf.empty?
-        list
+        list.compact
       end
     end
 
