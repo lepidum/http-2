@@ -456,12 +456,7 @@ module HTTP2
 
         # Literal header names MUST be translated to lowercase before
         # encoding and transmission.
-        #
-        # Representations for pseudo-header fields MUST appear before
-        # representations for regular header fields in a header block.
-        pseudo, regular = [], []
-        headers.each {|(hk,hv)| (hk[0] == ':' ? pseudo : regular) << [hk.downcase, hv] }
-        headers = pseudo + regular
+        headers.map! {|hk,hv| [hk.downcase, hv] }
 
         commands = @cc.encode(headers)
         commands.each do |cmd|
