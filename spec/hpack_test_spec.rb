@@ -37,13 +37,7 @@ describe HTTP2::Header do
               wire = [c['wire']].pack("H*").force_encoding('binary')
               @emitted = @dc.decode(HTTP2::Buffer.new(wire))
               headers = c['headers'].flat_map(&:to_a)
-
-              # pseudo headers should appear first
-              pseudo, regular = [], []
-              headers.each {|(hk,hv)| (hk[0] == ':' ? pseudo : regular) << [hk, hv] }
-              expected = pseudo + regular
-
-              @emitted.should eq expected
+              @emitted.should eq headers
             end
           end
         end
@@ -76,13 +70,7 @@ describe HTTP2::Header do
                   headers = c['headers'].flat_map(&:to_a)
                   wire = @cc.encode(headers)
                   decoded = @dc.decode(HTTP2::Buffer.new(wire))
-
-                  # pseudo headers should appear first
-                  pseudo, regular = [], []
-                  headers.each {|(hk,hv)| (hk[0] == ':' ? pseudo : regular) << [hk, hv] }
-                  expected = pseudo + regular
-
-                  decoded.should eq expected
+                  decoded.should eq headers
                 end
               end
             end
