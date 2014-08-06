@@ -27,7 +27,6 @@ module HTTP2
       window_update: 0x8,
       continuation:  0x9,
       altsvc:        0xa,
-      blocked:       0xb,
     }
 
     FRAME_TYPES_WITH_PADDING = [ :data, :headers, :push_promise ]
@@ -54,7 +53,6 @@ module HTTP2
       window_update:{},
       continuation: { end_headers: 2 },
       altsvc: {},
-      blocked: {},
     }
 
     # Default settings as defined by the spec
@@ -281,9 +279,6 @@ module HTTP2
           bytes << frame[:origin]
           length += frame[:origin].bytesize
         end
-
-      when :blocked
-        # no flags, no payload
       end
 
       # Process padding.
@@ -413,8 +408,6 @@ module HTTP2
         if payload.size > 0
           frame[:origin] = payload.read(payload.size)
         end
-      when :blocked
-        # no flags, no payload
       else
         # Unknown frame type is explicitly allowed
       end

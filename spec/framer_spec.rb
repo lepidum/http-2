@@ -344,19 +344,6 @@ describe HTTP2::Framer do
     end
   end
 
-  context "BLOCKED" do
-    it "should generate and parse bytes" do
-      frame = {
-        length: 0,
-        type: :blocked,
-        stream: 1,
-      }
-      bytes = f.generate(frame)
-      bytes.should eq [0, 0, 0xb, 0, 1].pack("CnCCN")
-      f.parse(bytes).should eq frame
-    end
-  end
-
   context "Padding" do
     [:data, :headers, :push_promise].each do |type|
       [1,256].each do |padlen|
