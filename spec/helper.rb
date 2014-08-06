@@ -19,7 +19,7 @@ HEADERS = {
   type: :headers,
   flags: [:end_headers],
   stream: 1,
-  payload: 'header-block'
+  payload: Compressor.new(:request).encode([['a','b']])
 }
 
 HEADERS_END_STREAM = {
@@ -33,8 +33,8 @@ PRIORITY = {
   type: :priority,
   stream: 1,
   exclusive: false,
-  stream_dependency: 1,
-  weight: 16,
+  stream_dependency: 0,
+  weight: 20,
 }
 
 RST_STREAM = {
@@ -57,7 +57,7 @@ PUSH_PROMISE = {
   flags: [:end_headers],
   stream: 1,
   promise_stream: 2,
-  payload: 'headers'
+  payload: Compressor.new(:request).encode([['a','b']])
 }
 
 PING = {

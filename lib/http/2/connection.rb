@@ -21,13 +21,13 @@ module HTTP2
   DEFAULT_CONNECTIONS_SETTINGS = {
     settings_header_table_size:       4096,
     settings_enable_push:             1,     # enabled for servers
-    settings_max_concurrent_streams:  100,   # unlimited
+    settings_max_concurrent_streams:  100,
     settings_initial_window_size:     65535, #
     settings_compress_data:           0,     # disabled
   }.freeze
 
   # Default stream priority (lower values are higher priority).
-  DEFAULT_PRIORITY    = 2**30
+  DEFAULT_WEIGHT    = 16
 
   # Default connection "fast-fail" preamble string as defined by the spec.
   CONNECTION_HEADER   = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -82,11 +82,11 @@ module HTTP2
     # @param priority [Integer]
     # @param window [Integer]
     # @param parent [Stream]
-    def new_stream(priority: DEFAULT_PRIORITY, parent: nil)
+    def new_stream(**args)
       raise ConnectionClosed.new if @state == :closed
       raise StreamLimitExceeded.new if @active_stream_count == @settings[:settings_max_concurrent_streams]
 
-      stream = activate_stream(@stream_id, priority, parent)
+      stream = activate_stream(id: @stream_id, **args)
       @stream_id += 2
 
       stream
@@ -173,16 +173,13 @@ module HTTP2
           @continuation << frame
           return if !frame[:flags].include? :end_headers
 
-          headers = @continuation.collect do |chunk|
-            decode_headers(chunk)
-            chunk[:payload]
-          end.flatten(1)
+          payload = @continuation.map {|f| f[:payload]}.join
 
           frame = @continuation.shift
           @continuation.clear
 
           frame.delete(:length)
-          frame[:payload] = headers
+          frame[:payload] = Buffer.new(payload)
           frame[:flags] << :end_headers
         end
 
@@ -213,8 +210,10 @@ module HTTP2
 
             stream = @streams[frame[:stream]]
             if stream.nil?
-              stream = activate_stream(frame[:stream],
-                                       frame[:priority] || DEFAULT_PRIORITY)
+              stream = activate_stream(id:         frame[:stream],
+                                       weight:     frame[:weight]     || DEFAULT_WEIGHT,
+                                       dependency: frame[:dependency] || 0,
+                                       exclusive:  frame[:exclusive]  || false)
               emit(:stream, stream)
             end
 
@@ -261,7 +260,7 @@ module HTTP2
               end
             end
 
-            stream = activate_stream(pid, DEFAULT_PRIORITY, parent)
+            stream = activate_stream(id: pid, parent: parent)
             emit(:promise, stream)
             stream << frame
           else
@@ -301,7 +300,9 @@ module HTTP2
             goaway(frame[:error])
           end
         else
-          emit(:frame, encode(frame))
+          # HEADERS and PUSH_PROMISE may generate CONTINUATION
+          frames = encode(frame)
+          frames.each {|f| emit(:frame, f) }
         end
       end
     end
@@ -309,14 +310,15 @@ module HTTP2
     # Applies HTTP 2.0 binary encoding to the frame.
     #
     # @param frame [Hash]
-    # @return [Buffer] encoded frame
+    # @return [Array of Buffer] encoded frame
     def encode(frame)
+      frames = [frame]
       if frame[:type] == :headers ||
          frame[:type] == :push_promise
-        encode_headers(frame)
+        frames = encode_headers(frame)
       end
 
-      @framer.generate(frame)
+      frames.map {|f| @framer.generate(f) }
     end
 
     # Check if frame is a connection frame: SETTINGS, PING, GOAWAY, and any
@@ -353,12 +355,12 @@ module HTTP2
           @window += frame[:increment]
           send_data(nil, true)
         when :ping
-          if frame[:flags].include? :pong
+          if frame[:flags].include? :ack
             emit(:pong, frame[:payload])
           else
             send({
               type: :ping, stream: 0,
-              flags: [:pong], payload: frame[:payload]
+              flags: [:ack], payload: frame[:payload]
             })
           end
         when :goaway
@@ -442,7 +444,8 @@ module HTTP2
     # @param frame [Hash]
     def decode_headers(frame)
       if frame[:payload].is_a? String
-        frame[:payload] = @decompressor.decode(frame[:payload])
+        headers = @decompressor.decode(frame[:payload])
+        frame[:payload] = postprocess_headers(headers)
       end
 
     rescue Exception => e
@@ -452,13 +455,82 @@ module HTTP2
     # Encode headers payload and update connection compressor state.
     #
     # @param frame [Hash]
+    # @return [Array of Frame]
     def encode_headers(frame)
-      if !frame[:payload].is_a? String
-        frame[:payload] = @compressor.encode(frame[:payload])
+      payload = frame[:payload]
+      unless payload.is_a? String
+        payload = preprocess_headers(payload)
+        payload = @compressor.encode(payload)
       end
 
+      frames = []
+
+      while payload.size > 0
+        cont = frame.dup
+        cont[:type] = :continuation
+        cont[:flags] = []
+        cont[:payload] = payload.slice!(0, Framer::MAX_PAYLOAD_SIZE)
+        frames << cont
+      end
+      if frames.empty?
+        frames = [frame]
+      else
+        frames.first[:type]  = frame[:type]
+        frames.first[:flags] = frame[:flags] - [:end_headers]
+        frames.last[:flags]  << :end_headers
+      end
+
+      frames
+
     rescue Exception => e
-      connection_error(:compression_error, msg: e.message)
+      [connection_error(:compression_error, msg: e.message)]
+    end
+
+    # Preprocess headers so that multiple values with the same name should be concatenated
+    # @param headers [Array of Key-Value]
+    # @return [Array of Key-Value]
+    def preprocess_headers(headers)
+      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.3
+      #
+      # To preserve the order of multiple occurrences of a header field with
+      # the same name, its ordered values are concatenated into a single
+      # value using a zero-valued octet (0x0) to delimit them.
+      headers.group_by {|n,v| n}.map do |name, tuples|
+        tuples.size == 1 ? tuples.first: [name, tuples.map {|k,v| v}.join("\0")]
+      end
+
+      # TODO:
+      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.4
+      #
+      # To allow for better compression efficiency, the Cookie header field
+      # MAY be split into separate header fields, each with one or more
+      # cookie-pairs.  If there are multiple Cookie header fields after
+      # decompression, these MUST be concatenated into a single octet string
+      # using the two octet delimiter of 0x3B, 0x20 (the ASCII string "; ").
+    end
+
+    # Postprocess headers to undo the preprocessing
+    # @param headers [Array of Key-Value]
+    # @return [Array of Key-Value]
+    def postprocess_headers(headers)
+      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.3
+      #
+      # After decompression, header fields that have values containing zero
+      # octets (0x0) MUST be split into multiple header fields before being
+      # processed.
+      #
+      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.4
+      #
+      # The Cookie header field MAY be split using a zero octet (0x0), as
+      # defined in Section 8.1.2.3.  When decoding, zero octets MUST be
+      # replaced with the cookie delimiter ("; ").
+      headers.flat_map do |name, value|
+        if name == 'cookie'
+          [[name, value.gsub(/\0/, "; ")]]
+        else
+          value.split(/\0/).map{|v| [name, v]}
+        end
+      end
     end
 
     # Activates new incoming or outgoing stream and registers appropriate
@@ -468,12 +540,12 @@ module HTTP2
     # @param priority [Integer]
     # @param window [Integer]
     # @param parent [Stream]
-    def activate_stream(id, priority, parent = nil)
+    def activate_stream(id: nil, **args)
       if @streams.key?(id)
         connection_error(msg: 'Stream ID already exists')
       end
 
-      stream = Stream.new(id, priority, @window_limit, parent)
+      stream = Stream.new({id: id, window: @window_limit}.merge(args))
 
       # Streams that are in the "open" state, or either of the "half closed"
       # states count toward the maximum number of streams that an endpoint is
