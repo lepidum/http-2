@@ -151,35 +151,7 @@ describe HTTP2::Header do
       cc.table.should be_empty
     end
 
-    it "should be initialized with empty working set" do
-      @cc.refset.should be_empty
-    end
-
-    it "should update reference set based on prior state" do
-      @cc.refset.should be_empty
-
-      @cc.process({name: 6, type: :indexed})
-      @cc.refset.should eq [[0, :emitted]]
-
-      @cc.process({name: 6, type: :indexed})
-      @cc.refset.should eq [[1, :emitted],[0, :emitted]]
-
-      @cc.process({name: 0, type: :indexed})
-      @cc.refset.should eq [[1, :emitted]]
-
-      @cc.process({name: 1, type: :indexed})
-      @cc.refset.should be_empty
-    end
-
     context "processing" do
-      it "should toggle index representation headers in working set" do
-        @cc.process({name: 6, type: :indexed})
-        @cc.refset.first.should eq [0, :emitted]
-
-        @cc.process({name: 0, type: :indexed})
-        @cc.refset.should be_empty
-      end
-
       [ ["no indexing", :noindex],
         ["never indexed", :neverindexed]].each do |desc, type|
         context "#{desc}" do
@@ -188,7 +160,6 @@ describe HTTP2::Header do
 
             emit = @cc.process({name: 4, value: "/path", type: type})
             emit.should eq [":path", "/path"]
-            @cc.refset.should be_empty
             @cc.table.should eq original_table
           end
 
@@ -197,7 +168,6 @@ describe HTTP2::Header do
 
             emit = @cc.process({name: "x-custom", value: "random", type: type})
             emit.should eq ["x-custom", "random"]
-            @cc.refset.should be_empty
             @cc.table.should eq original_table
           end
         end
@@ -209,7 +179,6 @@ describe HTTP2::Header do
 
           emit = @cc.process({name: 4, value: "/path", type: :incremental})
           emit.should eq [":path", "/path"]
-          @cc.refset.first.should eq [0, :emitted]
           (@cc.table - original_table).should eq [[":path", "/path"]]
         end
 
@@ -217,7 +186,6 @@ describe HTTP2::Header do
           original_table = @cc.table.dup
 
           @cc.process({name: "x-custom", value: "random", type: :incremental})
-          @cc.refset.first.should eq [0, :emitted]
           (@cc.table - original_table).should eq [["x-custom", "random"]]
         end
       end
@@ -279,9 +247,8 @@ describe HTTP2::Header do
       type: :request,
       table_size: 4096,
       huffman: :never,
-      refset: :shorter,
       streams: [
-        { wire: "8287 8644 0f77 7777 2e65 7861 6d70 6c65
+        { wire: "8286 8441 0f77 7777 2e65 7861 6d70 6c65
                  2e63 6f6d",
           emitted: [
             [":method", "GET"],
@@ -291,31 +258,25 @@ describe HTTP2::Header do
           ],
           table: [
             [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
-            [":method", "GET"],
           ],
-          refset: [0,1,2,3],
+          table_size: 57,
         },
-        { wire: "5c08 6e6f 2d63 6163 6865",
+        { wire: "8286 84be 5808 6e6f 2d63 6163 6865",
           emitted: [
-            ["cache-control", "no-cache"],
-            [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
             [":method", "GET"],
+            [":scheme", "http"],
+            [":path", "/"],
+            [":authority", "www.example.com"],
+            ["cache-control", "no-cache"],
           ],
           table: [
             ["cache-control", "no-cache"],
             [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
-            [":method", "GET"],
           ],
-          refset: [0,1,2,3,4],
+          table_size: 110,
         },
-        { wire: "3085 8c8b 8440 0a63 7573 746f 6d2d 6b65
-                 790c 6375 7374 6f6d 2d76 616c 7565",
+        { wire: "8287 85bf 400a 6375 7374 6f6d 2d6b 6579
+                 0c63 7573 746f 6d2d 7661 6c75 65",
           emitted: [
             [":method", "GET"],
             [":scheme", "https"],
@@ -325,15 +286,10 @@ describe HTTP2::Header do
           ],
           table: [
             ["custom-key", "custom-value"],
-            [":path", "/index.html"],
-            [":scheme", "https"],
             ["cache-control", "no-cache"],
             [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
-            [":method", "GET"],
           ],
-          refset: [0,1,2,4,7],
+          table_size: 164,
         }
       ],
     },
@@ -341,9 +297,8 @@ describe HTTP2::Header do
       type: :request,
       table_size: 4096,
       huffman: :always,
-      refset: :shorter,
       streams: [
-        { wire: "8287 8644 8cf1 e3c2 e5f2 3a6b a0ab 90f4 ff",
+        { wire: "8286 8441 8cf1 e3c2 e5f2 3a6b a0ab 90f4 ff",
           emitted: [
             [":method", "GET"],
             [":scheme", "http"],
@@ -352,31 +307,25 @@ describe HTTP2::Header do
           ],
           table: [
             [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
-            [":method", "GET"],
           ],
-          refset: [0,1,2,3],
+          table_size: 57,
         },
-        { wire: "5c86 a8eb 1064 9cbf",
+        { wire: "8286 84be 5886 a8eb 1064 9cbf",
           emitted: [
-            ["cache-control", "no-cache"],
-            [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
             [":method", "GET"],
+            [":scheme", "http"],
+            [":path", "/"],
+            [":authority", "www.example.com"],
+            ["cache-control", "no-cache"],
           ],
           table: [
             ["cache-control", "no-cache"],
             [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
-            [":method", "GET"],
           ],
-          refset: [0,1,2,3,4],
+          table_size: 110,
         },
-        { wire: "3085 8c8b 8440 8825 a849 e95b a97d 7f89
-                 25a8 49e9 5bb8 e8b4 bf",
+        { wire: "8287 85bf 4088 25a8 49e9 5ba9 7d7f 8925
+                 a849 e95b b8e8 b4bf",
           emitted: [
             [":method", "GET"],
             [":scheme", "https"],
@@ -386,15 +335,10 @@ describe HTTP2::Header do
           ],
           table: [
             ["custom-key", "custom-value"],
-            [":path", "/index.html"],
-            [":scheme", "https"],
             ["cache-control", "no-cache"],
             [":authority", "www.example.com"],
-            [":path", "/"],
-            [":scheme", "http"],
-            [":method", "GET"],
           ],
-          refset: [0,1,2,4,7],
+          table_size: 164,
         },
       ],
     },
@@ -402,11 +346,10 @@ describe HTTP2::Header do
       type: :response,
       table_size: 256,
       huffman: :never,
-      refset: :always,
       streams: [
-        { wire: "4803 3330 3259 0770 7269 7661 7465 631d
+        { wire: "4803 3330 3258 0770 7269 7661 7465 611d
                  4d6f 6e2c 2032 3120 4f63 7420 3230 3133
-                 2032 303a 3133 3a32 3120 474d 5471 1768
+                 2032 303a 3133 3a32 3120 474d 546e 1768
                  7474 7073 3a2f 2f77 7777 2e65 7861 6d70
                  6c65 2e63 6f6d",
           emitted: [
@@ -421,36 +364,36 @@ describe HTTP2::Header do
             ["cache-control", "private"],
             [":status", "302"],
           ],
-          refset: [0,1,2,3],
+          table_size: 222,
         },
-        { wire: "8c",
+        { wire: "4803 3330 37c1 c0bf",
           emitted: [
-            [":status", "200"],
-            ["location", "https://www.example.com"],
-            ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+            [":status", "307"],
             ["cache-control", "private"],
+            ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+            ["location", "https://www.example.com"],
           ],
           table: [
-            [":status", "200"],
+            [":status", "307"],
             ["location", "https://www.example.com"],
             ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
             ["cache-control", "private"],
           ],
-          refset: [0,1,2,3],
+          table_size: 222,
         },
-        { wire: "8484 431d 4d6f 6e2c 2032 3120 4f63 7420
+        { wire: "88c1 611d 4d6f 6e2c 2032 3120 4f63 7420
                  3230 3133 2032 303a 3133 3a32 3220 474d
-                 545e 0467 7a69 7084 8483 837b 3866 6f6f
-                 3d41 5344 4a4b 4851 4b42 5a58 4f51 5745
-                 4f50 4955 4158 5157 454f 4955 3b20 6d61
-                 782d 6167 653d 3336 3030 3b20 7665 7273
-                 696f 6e3d 31",
+                 54c0 5a04 677a 6970 7738 666f 6f3d 4153
+                 444a 4b48 514b 425a 584f 5157 454f 5049
+                 5541 5851 5745 4f49 553b 206d 6178 2d61
+                 6765 3d33 3630 303b 2076 6572 7369 6f6e
+                 3d31",
           emitted: [
+            [":status", "200"],
             ["cache-control", "private"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
-            ["content-encoding", "gzip"],
             ["location", "https://www.example.com"],
-            [":status", "200"],
+            ["content-encoding", "gzip"],
             ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"],
           ],
           table: [
@@ -458,7 +401,7 @@ describe HTTP2::Header do
             ["content-encoding", "gzip"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
           ],
-          refset: [0,1,2],
+          table_size: 215,
         },
       ],
     },
@@ -466,11 +409,10 @@ describe HTTP2::Header do
       type: :response,
       table_size: 256,
       huffman: :always,
-      refset: :always,
       streams: [
-        { wire: "4882 6402 5985 aec3 771a 4b63 96d0 7abe
+        { wire: "4882 6402 5885 aec3 771a 4b61 96d0 7abe
                  9410 54d4 44a8 2005 9504 0b81 66e0 82a6
-                 2d1b ff71 919d 29ad 1718 63c7 8f0b 97c8
+                 2d1b ff6e 919d 29ad 1718 63c7 8f0b 97c8
                  e9ae 82ae 43d3",
           emitted: [
             [":status", "302"],
@@ -484,35 +426,34 @@ describe HTTP2::Header do
             ["cache-control", "private"],
             [":status", "302"],
           ],
-          refset: [0,1,2,3],
+          table_size: 222,
         },
-        { wire: "8c",
+        { wire: "4883 640e ffc1 c0bf",
           emitted: [
-            [":status", "200"],
-            ["location", "https://www.example.com"],
-            ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+            [":status", "307"],
             ["cache-control", "private"],
+            ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
+            ["location", "https://www.example.com"],
           ],
           table: [
-            [":status", "200"],
+            [":status", "307"],
             ["location", "https://www.example.com"],
             ["date", "Mon, 21 Oct 2013 20:13:21 GMT"],
             ["cache-control", "private"],
           ],
-          refset: [0,1,2,3],
+          table_size: 222,
         },
-        { wire: "8484 4396 d07a be94 1054 d444 a820 0595
-                 040b 8166 e084 a62d 1bff 5e83 9bd9 ab84
-                 8483 837b ad94 e782 1dd7 f2e6 c7b3 35df
-                 dfcd 5b39 60d5 af27 087f 3672 c1ab 270f
-                 b529 1f95 8731 6065 c003 ed4e e5b1 063d
-                 5007",
+        { wire: "88c1 6196 d07a be94 1054 d444 a820 0595
+                 040b 8166 e084 a62d 1bff c05a 839b d9ab
+                 77ad 94e7 821d d7f2 e6c7 b335 dfdf cd5b
+                 3960 d5af 2708 7f36 72c1 ab27 0fb5 291f
+                 9587 3160 65c0 03ed 4ee5 b106 3d50 07",
           emitted: [
+            [":status", "200"],
             ["cache-control", "private"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
-            ["content-encoding", "gzip"],
             ["location", "https://www.example.com"],
-            [":status", "200"],
+            ["content-encoding", "gzip"],
             ["set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"],
           ],
           table: [
@@ -520,7 +461,7 @@ describe HTTP2::Header do
             ["content-encoding", "gzip"],
             ["date", "Mon, 21 Oct 2013 20:13:22 GMT"],
           ],
-          refset: [0,1,2],
+          table_size: 215,
         },
       ],
     },
@@ -544,16 +485,16 @@ describe HTTP2::Header do
             end
             it "should emit expected headers" do
               subject
-              Set[*@emitted].should eq Set[*ex[:streams][nth][:emitted]]
+              # order-perserving compare
+              @emitted.should eq ex[:streams][nth][:emitted]
             end
             it "should update header table" do
               subject
               @dc.instance_eval{@cc.table}.should eq ex[:streams][nth][:table]
             end
-            it "should update refset" do
+            it "should compute header table size" do
               subject
-              Set[*@dc.instance_eval{@cc.refset}.map{|r|r.first}].should eq \
-              Set[*ex[:streams][nth][:refset]]
+              @dc.instance_eval{@cc.current_table_size}.should eq ex[:streams][nth][:table_size]
             end
           end
         end
@@ -568,8 +509,7 @@ describe HTTP2::Header do
           context "request #{nth+1}" do
             before { @cc = Compressor.new(ex[:type],
                                           table_size: ex[:table_size],
-                                          huffman: ex[:huffman],
-                                          refset: ex[:refset]) }
+                                          huffman: ex[:huffman]) }
             before do
               (0...nth).each do |i|
                 @cc.encode(ex[:streams][i][:emitted])
@@ -585,10 +525,9 @@ describe HTTP2::Header do
               subject
               @cc.instance_eval{@cc.table}.should eq ex[:streams][nth][:table]
             end
-            it "should update refset" do
+            it "should compute header table size" do
               subject
-              Set[*@cc.instance_eval{@cc.refset}.map{|r|r.first}].should eq \
-              Set[*ex[:streams][nth][:refset]]
+              @cc.instance_eval{@cc.current_table_size}.should eq ex[:streams][nth][:table_size]
             end
           end
         end
