@@ -347,9 +347,9 @@ describe HTTP2::Connection do
         ':scheme' => 'http',
         ':authority' => 'www.example.org',
         ':path'   => '/resource',
-        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
+        'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
       }, end_stream: true)
-      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers[0][:length].should eq @conn.max_frame_size
       headers.size.should eq 1
       headers[0][:type].should eq :headers
       headers[0][:flags].should include(:end_headers)
@@ -370,9 +370,9 @@ describe HTTP2::Connection do
         ':scheme' => 'http',
         ':authority' => 'www.example.org',
         ':path'   => '/resource',
-        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
+        'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
       }, end_stream: true)
-      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers[0][:length].should eq @conn.max_frame_size
       headers.size.should eq 1
       headers[0][:type].should eq :headers
       headers[0][:flags].should include(:end_headers)
@@ -383,7 +383,7 @@ describe HTTP2::Connection do
       headers = []
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
       end
 
       stream = @conn.new_stream
@@ -392,9 +392,9 @@ describe HTTP2::Connection do
         ':scheme' => 'http',
         ':authority' => 'www.example.org',
         ':path'   => '/resource',
-        'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
+        'custom' => 'q' * 18683, # this number should be updated when Huffman table is changed
       }, end_stream: true)
-      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers[0][:length].should eq @conn.max_frame_size
       headers[1][:length].should eq 1
       headers.size.should eq 2
       headers[0][:type].should eq :headers
