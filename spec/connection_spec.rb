@@ -383,7 +383,7 @@ describe HTTP2::Connection do
       headers = []
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
       end
 
       stream = @conn.new_stream
