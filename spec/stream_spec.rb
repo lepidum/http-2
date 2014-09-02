@@ -551,7 +551,7 @@ describe HTTP2::Stream do
     end
 
     it ".data should split large DATA frames" do
-      data = "x" * HTTP2::MAX_FRAME_SIZE * 2
+      data = "x" * 16384 * 2
 
       @stream.stub(:send)
       @stream.should_receive(:send).exactly(3).times

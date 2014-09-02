@@ -70,7 +70,8 @@ module HTTP2
     # @param exclusive [Boolean]
     # @param window [Integer]
     # @param parent [Stream]
-    def initialize(id:, weight: 16, dependency: 0, exclusive: false, window:, parent: nil)
+    def initialize(connection:, id:, weight: 16, dependency: 0, exclusive: false, window:, parent: nil)
+      @connection = connection
       @id = id
       @weight = weight
       @dependency = dependency
@@ -167,8 +168,8 @@ module HTTP2
       flags = []
       flags << :end_stream if end_stream
 
-      while payload.bytesize > MAX_FRAME_SIZE do
-        chunk = payload.slice!(0, MAX_FRAME_SIZE)
+      while payload.bytesize > @connection.max_frame_size do
+        chunk = payload.slice!(0, @connection.max_frame_size)
         send({type: :data, payload: chunk})
       end
 

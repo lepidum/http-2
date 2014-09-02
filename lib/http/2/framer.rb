@@ -5,8 +5,11 @@ module HTTP2
   class Framer
     include Error
 
-    # Maximum frame size (16777215 bytes)
-    MAX_PAYLOAD_SIZE = 2**24-1
+    # Default value of max frame size (16384 bytes)
+    DEFAULT_MAX_FRAME_SIZE = 2**14
+
+    # Current maximum frame size
+    attr_accessor :max_frame_size
 
     # Maximum stream ID (2^31)
     MAX_STREAM_ID = 0x7fffffff
@@ -93,6 +96,12 @@ module HTTP2
 
     private_constant :RBIT, :RBYTE, :EBIT, :HEADERPACK, :UINT32, :UINT16, :UINT8, :BINARY
 
+    # Initializes new framer object.
+    #
+    def initialize
+      @max_frame_size = DEFAULT_MAX_FRAME_SIZE
+    end
+
     # Generates common 8-byte frame header.
     # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-04#section-4.1
     #
@@ -105,7 +114,7 @@ module HTTP2
         raise CompressionError.new("Invalid frame type (#{frame[:type]})")
       end
 
-      if frame[:length] > MAX_PAYLOAD_SIZE
+      if frame[:length] > @max_frame_size
         raise CompressionError.new("Frame size is too large: #{frame[:length]}")
       end
 
@@ -291,7 +300,7 @@ module HTTP2
 
         padlen = frame[:padding]
         padlen > 0 or raise CompressionError.new("Invalid padding #{padlen}")
-        padlen + length > MAX_PAYLOAD_SIZE and raise CompressionError.new("Invalid padding #{padlen} too large")
+        padlen + length > @max_frame_size and raise CompressionError.new("Invalid padding #{padlen} too large")
 
         length += padlen
         if padlen > 256
