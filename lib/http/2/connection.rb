@@ -64,6 +64,10 @@ module HTTP2
     # Current value of connection SETTINGS
     def settings_value; @settings; end
 
+    # Pending settings value
+    #  Sent but not ack'ed settings
+    attr_reader :pending_settings
+
     # Number of active streams between client and server (reserved streams
     # are not counted towards the stream limit).
     attr_reader :active_stream_count
@@ -74,6 +78,7 @@ module HTTP2
       @settings = DEFAULT_CONNECTIONS_SETTINGS.merge(settings)
       @active_stream_count = 0
       @streams = {}
+      @pending_settings = []
 
       @framer = Framer.new
 
@@ -135,6 +140,7 @@ module HTTP2
     # @param settings [Array or Hash]
     def settings(payload)
       payload = payload.to_a
+      @pending_settings << payload
       send({type: :settings, stream: 0, payload: payload})
     end
 
@@ -399,9 +405,15 @@ module HTTP2
         connection_error
       end
 
-      return if frame[:flags].include?(:ack)
+      settings, ack_received = \
+        if frame[:flags].include?(:ack)
+          # Process pending settings we have sent.
+          [@pending_settings.shift, true]
+        else
+          [frame[:payload], false]
+        end
 
-      frame[:payload].each do |key,v|
+      settings.each do |key,v|
         @settings[key] = v
         case key
         when :settings_max_concurrent_streams
@@ -445,8 +457,12 @@ module HTTP2
         end
       end
 
-      # send ack
-      send({type: :settings, stream: 0, payload: [], flags: [:ack]})
+      if ack_received
+        emit(:settings_ack, frame, @pending_settings.size)
+      elsif @state != :closed
+        # send ack
+        send({type: :settings, stream: 0, payload: [], flags: [:ack]})
+      end
     end
 
     # Decode headers payload and update connection decompressor state.
