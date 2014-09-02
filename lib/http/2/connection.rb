@@ -306,6 +306,7 @@ module HTTP2
     # @note all frames are currently delivered in FIFO order.
     # @param frame [Hash]
     def send(frame)
+      emit(:frame_sent, frame)
       if frame[:type] == :data
         send_data(frame, true)
 
@@ -404,11 +405,13 @@ module HTTP2
         connection_error
       end
 
-      settings = frame[:payload]
-
-      if frame[:flags].include?(:ack)
-        settings = @pending_settings.shift
-      end
+      settings, ack_received = \
+        if frame[:flags].include?(:ack)
+          # Process pending settings we have sent.
+          [@pending_settings.shift, true]
+        else
+          [frame[:payload], false]
+        end
 
       settings.each do |key,v|
         @settings[key] = v
@@ -454,8 +457,12 @@ module HTTP2
         end
       end
 
-      # send ack
-      send({type: :settings, stream: 0, payload: [], flags: [:ack]})
+      if ack_received
+        emit(:settings_ack, frame, @pending_settings.size)
+      elsif @state != :closed
+        # send ack
+        send({type: :settings, stream: 0, payload: [], flags: [:ack]})
+      end
     end
 
     # Decode headers payload and update connection decompressor state.
