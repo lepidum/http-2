@@ -140,8 +140,8 @@ module HTTP2
     # @param settings [Array or Hash]
     def settings(payload)
       payload = payload.to_a
-      send({type: :settings, stream: 0, payload: payload})
       @pending_settings << payload
+      send({type: :settings, stream: 0, payload: payload})
     end
 
     # Decodes incoming bytes into HTTP 2.0 frames and routes them to
