@@ -110,7 +110,7 @@ describe HTTP2::Connection do
       stream.headers(input)
 
       headers.size.should eq 1
-      emitted = Decompressor.new(:request).decode(headers.first[:payload])
+      emitted = Decompressor.new.decode(headers.first[:payload])
       emitted.should match_array(expected)
     end
 
@@ -218,7 +218,7 @@ describe HTTP2::Connection do
         ["x-my-header", "first"]
       ]
 
-      cc = Compressor.new(:response)
+      cc = Compressor.new
       headers = HEADERS.dup
       headers[:payload] = cc.encode(req_headers)
 
@@ -238,7 +238,7 @@ describe HTTP2::Connection do
         ["x-my-header", "first"]
       ]
 
-      cc = Compressor.new(:response)
+      cc = Compressor.new
       h1, h2 = HEADERS.dup, CONTINUATION.dup
 
       # Header block fragment might not complete for decompression
