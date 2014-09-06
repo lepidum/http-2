@@ -25,8 +25,6 @@ module HTTP2
     def initialize(**args)
       @stream_id    = 2
       @state        = :new
-      @compressor   = Header::Compressor.new(:response, args)
-      @decompressor = Header::Decompressor.new(:request, args)
 
       super
     end

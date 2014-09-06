@@ -74,8 +74,12 @@ module HTTP2
 
     # Initializes new connection object.
     #
-    def initialize(settings = {})
+    def initialize(**settings)
       @settings = DEFAULT_CONNECTIONS_SETTINGS.merge(settings)
+
+      @compressor   = Header::Compressor.new(settings)
+      @decompressor = Header::Decompressor.new(settings)
+
       @active_stream_count = 0
       @streams = {}
       @pending_settings = []
