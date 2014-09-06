@@ -3,7 +3,7 @@ require 'json'
 
 describe HTTP2::Header do
   folders = %w[
-    #go-hpack
+    go-hpack
     haskell-http2-diff
     haskell-http2-diff-huffman
     haskell-http2-linear
