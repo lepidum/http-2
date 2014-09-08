@@ -34,6 +34,12 @@ loop do
     puts "Writing bytes: #{bytes.unpack("H*").first}"
     sock.write bytes
   end
+  conn.on(:frame_sent) do |frame|
+    puts "Sent frame: #{frame.inspect}"
+  end
+  conn.on(:frame_received) do |frame|
+    puts "Received frame: #{frame.inspect}"
+  end
 
   conn.on(:stream) do |stream|
     log = Logger.new(stream.id)
@@ -78,6 +84,7 @@ loop do
 
   while !sock.closed? && !sock.eof?
     data = sock.readpartial(1024)
+    puts "Received bytes: #{data.unpack("H*").first}"
 
     begin
       conn << data
