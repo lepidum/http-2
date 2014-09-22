@@ -37,11 +37,11 @@ module HTTP2
     # Per frame flags as defined by the spec
     FRAME_FLAGS = {
       data: {
-        end_stream:  0, end_segment: 1,
+        end_stream:  0,
         padded: 3, compressed: 5
       },
       headers: {
-        end_stream:  0, end_segment: 1, end_headers: 2,
+        end_stream:  0, end_headers: 2,
         padded: 3, priority: 5,
       },
       priority:     {},
@@ -102,8 +102,8 @@ module HTTP2
       @max_frame_size = DEFAULT_MAX_FRAME_SIZE
     end
 
-    # Generates common 8-byte frame header.
-    # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-04#section-4.1
+    # Generates common 9-byte frame header.
+    # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-14#section-4.1
     #
     # @param frame [Hash]
     # @return [String]
@@ -130,7 +130,7 @@ module HTTP2
         raise CompressionError.new("Window increment (#{frame[:increment]}) is too large")
       end
 
-      header << (frame[:length] >> 8) << (frame[:length] & 0xff)
+      header << (frame[:length] >> 16) << (frame[:length] & 0xffff)
       header << FRAME_TYPES[frame[:type]]
       header << frame[:flags].reduce(0) do |acc, f|
         position = FRAME_FLAGS[frame[:type]][f]

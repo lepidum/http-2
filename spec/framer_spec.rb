@@ -9,19 +9,32 @@ describe HTTP2::Framer do
       {
         length: 4,
         type: :headers,
-        flags: [:end_stream, :end_segment, :end_headers],
+        flags: [:end_stream, :end_headers],
         stream: 15,
       }
     }
 
-    let(:bytes) { [0,0x04, 0x01, 0x7, 0x0000000F].pack("CnCCN") }
+    let(:bytes) { [0,0x04, 0x01, 0x5, 0x0000000F].pack("CnCCN") }
 
     it "should generate common 9 byte header" do
       f.commonHeader(frame).should eq bytes
     end
 
-    it "should parse common 8 byte header" do
+    it "should parse common 9 byte header" do
       f.readCommonHeader(Buffer.new(bytes)).should eq frame
+    end
+
+    it "should generate a large frame" do
+      f = Framer.new
+      f.max_frame_size = 2**24-1
+      frame = {
+        length: 2**18,
+        type: :headers,
+        flags: [:end_stream, :end_headers],
+        stream: 15,
+      }
+      bytes = [4, 0, 0x01, 0x5, 0x0000000F].pack("CnCCN")
+      f.commonHeader(frame).should eq bytes
     end
 
     it "should raise exception on invalid frame type when sending" do
@@ -58,13 +71,13 @@ describe HTTP2::Framer do
       frame = {
         length: 4,
         type: :data,
-        flags: [:end_stream, :end_segment],
+        flags: [:end_stream],
         stream: 1,
         payload: 'text'
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0,0x4,0x0,0x3,0x1,*'text'.bytes].pack("CnCCNC*")
+      bytes.should eq [0,0x4,0x0,0x1,0x1,*'text'.bytes].pack("CnCCNC*")
 
       f.parse(bytes).should eq frame
     end
@@ -75,13 +88,13 @@ describe HTTP2::Framer do
       frame = {
         length: 12,
         type: :headers,
-        flags: [:end_stream, :end_segment, :end_headers],
+        flags: [:end_stream, :end_headers],
         stream: 1,
         payload: 'header-block'
       }
 
       bytes = f.generate(frame)
-      bytes.should eq [0,0xc,0x1,0x7,0x1,*'header-block'.bytes].pack("CnCCNC*")
+      bytes.should eq [0,0xc,0x1,0x5,0x1,*'header-block'.bytes].pack("CnCCNC*")
       f.parse(bytes).should eq frame
     end
 
