@@ -104,9 +104,8 @@ module HTTP2
           index:      :all,
           table_size: 4096,
         }
-        options = default_options.merge(options)
         @table = []
-        @options = options
+        @options = default_options.merge(options)
         @limit = @options[:table_size]
       end
 
