@@ -24,6 +24,42 @@ describe HTTP2::Connection do
     end
   end
 
+  context "settings synchronization" do
+    it "should reflect outgoing settings when ack is received" do
+      @conn.local_settings[:settings_header_table_size].should eq 4096
+      @conn.settings(settings_header_table_size: 256)
+      @conn.local_settings[:settings_header_table_size].should eq 4096
+
+      ack = { type: :settings, stream: 0, payload: [], flags: [:ack] }
+      @conn << f.generate(ack)
+
+      @conn.local_settings[:settings_header_table_size].should eq 256
+    end
+
+    it "should reflect incoming settings when SETTINGS is received" do
+      @conn.remote_settings[:settings_header_table_size].should eq 4096
+      settings = SETTINGS.dup
+      settings[:payload] = [[:settings_header_table_size, 256]]
+
+      @conn << f.generate(settings)
+
+      @conn.remote_settings[:settings_header_table_size].should eq 256
+    end
+
+    it "should send SETTINGS ACK when SETTINGS is received" do
+      settings = SETTINGS.dup
+      settings[:payload] = [[:settings_header_table_size, 256]]
+
+      @conn.should_receive(:send) do |frame|
+        frame[:type].should eq :settings
+        frame[:flags].should eq [:ack]
+        frame[:payload].should eq []
+      end
+
+      @conn << f.generate(settings)
+    end
+  end
+
   context "stream management" do
     it "should initialize to default stream limit (100)" do
       @conn.local_settings[:settings_max_concurrent_streams].should eq 100

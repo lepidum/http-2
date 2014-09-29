@@ -298,7 +298,7 @@ module HTTP2
         end
       end
 
-    rescue
+    rescue => e
       # This rescue clause doesn't catch Exception, intentionally.
       # HandshakeError or already handled connection_error should not be caught.
       connection_error
