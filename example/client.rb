@@ -43,6 +43,9 @@ conn.on(:frame) do |bytes|
   sock.print bytes
   sock.flush
 end
+conn.on(:frame_sent) do |frame|
+  puts "Sent frame: #{frame.inspect}"
+end
 conn.on(:frame_received) do |frame|
   puts "Received frame: #{frame.inspect}"
 end

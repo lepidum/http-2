@@ -22,11 +22,9 @@ module HTTP2
   class Server < Connection
 
     # Initialize new HTTP 2.0 server object.
-    def initialize(**args)
+    def initialize(**settings)
       @stream_id    = 2
       @state        = :new
-      @compressor   = Header::Compressor.new(:response, args)
-      @decompressor = Header::Decompressor.new(:request, args)
 
       super
     end

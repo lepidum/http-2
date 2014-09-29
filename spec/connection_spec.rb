@@ -103,14 +103,15 @@ describe HTTP2::Connection do
       headers = []
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+        # bytes[3]: frame's type field
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
       end
 
       stream = @conn.new_stream
       stream.headers(input)
 
       headers.size.should eq 1
-      emitted = Decompressor.new(:request).decode(headers.first[:payload])
+      emitted = Decompressor.new.decode(headers.first[:payload])
       emitted.should match_array(expected)
     end
 
@@ -218,7 +219,7 @@ describe HTTP2::Connection do
         ["x-my-header", "first"]
       ]
 
-      cc = Compressor.new(:response)
+      cc = Compressor.new
       headers = HEADERS.dup
       headers[:payload] = cc.encode(req_headers)
 
@@ -238,7 +239,7 @@ describe HTTP2::Connection do
         ["x-my-header", "first"]
       ]
 
-      cc = Compressor.new(:response)
+      cc = Compressor.new
       h1, h2 = HEADERS.dup, CONTINUATION.dup
 
       # Header block fragment might not complete for decompression
@@ -281,6 +282,13 @@ describe HTTP2::Connection do
       }.to raise_error(CompressionError)
     end
 
+    it "should raise connection error on decode exception" do
+      @conn << f.generate(SETTINGS)
+      frame = f.generate(HEADERS.dup)
+      @conn.instance_eval{@framer}.should_receive(:parse).and_raise(CompressionError.new)
+      expect { @conn << frame }.to raise_error(ProtocolError)
+    end
+
     it "should emit encoded frames via on(:frame)" do
       bytes = nil
       @conn.on(:frame) {|d| bytes = d }
@@ -311,7 +319,8 @@ describe HTTP2::Connection do
       headers = []
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+        # bytes[3]: frame's type field
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
       end
 
       stream = @conn.new_stream
@@ -335,51 +344,8 @@ describe HTTP2::Connection do
       headers = []
       @conn.on(:frame) do |bytes|
         bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
-      end
-
-      stream = @conn.new_stream
-      stream.headers({
-        ':method' => 'get',
-        ':scheme' => 'http',
-        ':authority' => 'www.example.org',
-        ':path'   => '/resource',
-        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
-      }, end_stream: true)
-      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
-      headers.size.should eq 1
-      headers[0][:type].should eq :headers
-      headers[0][:flags].should include(:end_headers)
-      headers[0][:flags].should include(:end_stream)
-    end
-
-    it "should not generate CONTINUATION if HEADERS fits exactly in a frame" do
-      headers = []
-      @conn.on(:frame) do |bytes|
-        bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
-      end
-
-      stream = @conn.new_stream
-      stream.headers({
-        ':method' => 'get',
-        ':scheme' => 'http',
-        ':authority' => 'www.example.org',
-        ':path'   => '/resource',
-        'custom' => 'q' * 18681, # this number should be updated when Huffman table is changed
-      }, end_stream: true)
-      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
-      headers.size.should eq 1
-      headers[0][:type].should eq :headers
-      headers[0][:flags].should include(:end_headers)
-      headers[0][:flags].should include(:end_stream)
-    end
-
-    it "should generate CONTINUATION if HEADERS exceed the max payload by one byte" do
-      headers = []
-      @conn.on(:frame) do |bytes|
-        bytes.force_encoding('binary')
-        [1,5,9].include?(bytes[2].ord) and headers << f.parse(bytes)
+        # bytes[3]: frame's type field
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
       end
 
       stream = @conn.new_stream
@@ -390,7 +356,52 @@ describe HTTP2::Connection do
         ':path'   => '/resource',
         'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
       }, end_stream: true)
-      headers[0][:length].should eq Framer::MAX_PAYLOAD_SIZE
+      headers[0][:length].should eq @conn.max_frame_size
+      headers.size.should eq 1
+      headers[0][:type].should eq :headers
+      headers[0][:flags].should include(:end_headers)
+      headers[0][:flags].should include(:end_stream)
+    end
+
+    it "should not generate CONTINUATION if HEADERS fits exactly in a frame" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        # bytes[3]: frame's type field
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18682, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq @conn.max_frame_size
+      headers.size.should eq 1
+      headers[0][:type].should eq :headers
+      headers[0][:flags].should include(:end_headers)
+      headers[0][:flags].should include(:end_stream)
+    end
+
+    it "should generate CONTINUATION if HEADERS exceed the max payload by one byte" do
+      headers = []
+      @conn.on(:frame) do |bytes|
+        bytes.force_encoding('binary')
+        [1,5,9].include?(bytes[3].ord) and headers << f.parse(bytes)
+      end
+
+      stream = @conn.new_stream
+      stream.headers({
+        ':method' => 'get',
+        ':scheme' => 'http',
+        ':authority' => 'www.example.org',
+        ':path'   => '/resource',
+        'custom' => 'q' * 18683, # this number should be updated when Huffman table is changed
+      }, end_stream: true)
+      headers[0][:length].should eq @conn.max_frame_size
       headers[1][:length].should eq 1
       headers.size.should eq 2
       headers[0][:type].should eq :headers

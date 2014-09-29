@@ -173,8 +173,8 @@ describe HTTP2::Stream do
         sp.receive HEADERS
         sr.send HEADERS
 
-        openp.should be_true
-        openr.should be_true
+        openp.should be_truthy
+        openr.should be_truthy
       end
 
       it "should not emit :active on transition from open" do
@@ -202,8 +202,8 @@ describe HTTP2::Stream do
         sp.receive RST_STREAM
         sr.close
 
-        closep.should be_true
-        closer.should be_true
+        closep.should be_truthy
+        closer.should be_truthy
       end
 
       it "should emit :close after frame is processed" do
@@ -291,7 +291,7 @@ describe HTTP2::Stream do
         @stream.receive RST_STREAM
 
         @stream.state.should eq :closed
-        closed.should be_true
+        closed.should be_truthy
       end
     end
 
@@ -356,7 +356,7 @@ describe HTTP2::Stream do
         @stream.close
 
         @stream.state.should eq :closed
-        closed.should be_true
+        closed.should be_truthy
       end
     end
 
@@ -551,7 +551,7 @@ describe HTTP2::Stream do
     end
 
     it ".data should split large DATA frames" do
-      data = "x" * HTTP2::MAX_FRAME_SIZE * 2
+      data = "x" * 16384 * 2
 
       @stream.stub(:send)
       @stream.should_receive(:send).exactly(3).times

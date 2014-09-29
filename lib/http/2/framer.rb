@@ -1,12 +1,15 @@
 module HTTP2
 
-  # Performs encoding, decoding, and validation of binary HTTP 2.0 frames.
+  # Performs encoding, decoding, and validation of binary HTTP/2 frames.
   #
   class Framer
     include Error
 
-    # Maximum frame size (16383 bytes)
-    MAX_PAYLOAD_SIZE = 2**14-1
+    # Default value of max frame size (16384 bytes)
+    DEFAULT_MAX_FRAME_SIZE = 2**14
+
+    # Current maximum frame size
+    attr_accessor :max_frame_size
 
     # Maximum stream ID (2^31)
     MAX_STREAM_ID = 0x7fffffff
@@ -14,7 +17,7 @@ module HTTP2
     # Maximum window increment value (2^31)
     MAX_WINDOWINC = 0x7fffffff
 
-    # HTTP 2.0 frame type mapping as defined by the spec
+    # HTTP/2 frame type mapping as defined by the spec
     FRAME_TYPES = {
       data:          0x0,
       headers:       0x1,
@@ -27,7 +30,6 @@ module HTTP2
       window_update: 0x8,
       continuation:  0x9,
       altsvc:        0xa,
-      blocked:       0xb,
     }
 
     FRAME_TYPES_WITH_PADDING = [ :data, :headers, :push_promise ]
@@ -35,11 +37,11 @@ module HTTP2
     # Per frame flags as defined by the spec
     FRAME_FLAGS = {
       data: {
-        end_stream:  0, end_segment: 1,
+        end_stream:  0,
         padded: 3, compressed: 5
       },
       headers: {
-        end_stream:  0, end_segment: 1, end_headers: 2,
+        end_stream:  0, end_headers: 2,
         padded: 3, priority: 5,
       },
       priority:     {},
@@ -54,7 +56,6 @@ module HTTP2
       window_update:{},
       continuation: { end_headers: 2 },
       altsvc: {},
-      blocked: {},
     }
 
     # Default settings as defined by the spec
@@ -63,7 +64,8 @@ module HTTP2
       settings_enable_push:            2,
       settings_max_concurrent_streams: 3,
       settings_initial_window_size:    4,
-      settings_compress_data:          5,
+      settings_max_frame_size:         5,
+      settings_max_header_list_size:   6,
     }
 
     # Default error types as defined by the spec
@@ -89,13 +91,19 @@ module HTTP2
     UINT32 = "N".freeze
     UINT16 = "n".freeze
     UINT8  = "C".freeze
-    HEADERPACK = (UINT16 + UINT8 + UINT8 + UINT32).freeze
+    HEADERPACK = (UINT8 + UINT16 + UINT8 + UINT8 + UINT32).freeze
     BINARY = 'binary'.freeze
 
     private_constant :RBIT, :RBYTE, :EBIT, :HEADERPACK, :UINT32, :UINT16, :UINT8, :BINARY
 
-    # Generates common 8-byte frame header.
-    # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-04#section-4.1
+    # Initializes new framer object.
+    #
+    def initialize
+      @max_frame_size = DEFAULT_MAX_FRAME_SIZE
+    end
+
+    # Generates common 9-byte frame header.
+    # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-14#section-4.1
     #
     # @param frame [Hash]
     # @return [String]
@@ -106,8 +114,12 @@ module HTTP2
         raise CompressionError.new("Invalid frame type (#{frame[:type]})")
       end
 
-      if frame[:length] > MAX_PAYLOAD_SIZE
+      if frame[:length] > @max_frame_size
         raise CompressionError.new("Frame size is too large: #{frame[:length]}")
+      end
+
+      if frame[:length] < 0
+        raise CompressionError.new("Frame size is invalid: #{frame[:length]}")
       end
 
       if frame[:stream] > MAX_STREAM_ID
@@ -118,7 +130,7 @@ module HTTP2
         raise CompressionError.new("Window increment (#{frame[:increment]}) is too large")
       end
 
-      header << frame[:length]
+      header << (frame[:length] >> 16) << (frame[:length] & 0xffff)
       header << FRAME_TYPES[frame[:type]]
       header << frame[:flags].reduce(0) do |acc, f|
         position = FRAME_FLAGS[frame[:type]][f]
@@ -134,12 +146,13 @@ module HTTP2
       header.pack(HEADERPACK) # 16,8,8,32
     end
 
-    # Decodes common 8-byte header.
+    # Decodes common 9-byte header.
     #
     # @param buf [Buffer]
     def readCommonHeader(buf)
       frame = {}
-      frame[:length], type, flags, stream = buf.slice(0,8).unpack(HEADERPACK)
+      len_h, len_l, type, flags, stream = buf.slice(0,9).unpack(HEADERPACK)
+      frame[:length] = len_h * 256 + len_l
 
       frame[:type], _ = FRAME_TYPES.select { |t,pos| type == pos }.first
       if frame[:type]
@@ -153,7 +166,7 @@ module HTTP2
       frame
     end
 
-    # Generates encoded HTTP 2.0 frame.
+    # Generates encoded HTTP/2 frame.
     # - http://tools.ietf.org/html/draft-ietf-httpbis-http2
     #
     # @param frame [Hash]
@@ -275,9 +288,6 @@ module HTTP2
           bytes << frame[:origin]
           length += frame[:origin].bytesize
         end
-
-      when :blocked
-        # no flags, no payload
       end
 
       # Process padding.
@@ -290,7 +300,7 @@ module HTTP2
 
         padlen = frame[:padding]
         padlen > 0 or raise CompressionError.new("Invalid padding #{padlen}")
-        padlen + length > MAX_PAYLOAD_SIZE and raise CompressionError.new("Invalid padding #{padlen} too large")
+        padlen + length > @max_frame_size and raise CompressionError.new("Invalid padding #{padlen} too large")
 
         length += padlen
         if padlen > 256
@@ -309,21 +319,21 @@ module HTTP2
       bytes.prepend(commonHeader(frame))
     end
 
-    # Decodes complete HTTP 2.0 frame from provided buffer. If the buffer
+    # Decodes complete HTTP/2 frame from provided buffer. If the buffer
     # does not contain enough data, no further work is performed.
     #
     # @param buf [Buffer]
     def parse(buf)
-      return nil if buf.size < 8
+      return nil if buf.size < 9
       frame = readCommonHeader(buf)
-      return nil if buf.size < 8 + frame[:length]
+      return nil if buf.size < 9 + frame[:length]
 
-      buf.read(8)
+      buf.read(9)
       payload = buf.read(frame[:length])
 
       # Implementations MUST discard frames
       # that have unknown or unsupported types.
-      # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-5.5
+      # - http://tools.ietf.org/html/draft-ietf-httpbis-http2-14#section-5.5
       return nil if frame[:type].nil?
 
       # Process padding
@@ -389,7 +399,7 @@ module HTTP2
         frame[:last_stream] = payload.read_uint32 & RBIT
         frame[:error] = unpack_error payload.read_uint32
 
-        size = frame[:length] - 8
+        size = frame[:length] - 8 # for last_stream and error
         frame[:payload] = payload.read(size) if size > 0
       when :window_update
         frame[:increment] = payload.read_uint32 & RBIT
@@ -407,8 +417,6 @@ module HTTP2
         if payload.size > 0
           frame[:origin] = payload.read(payload.size)
         end
-      when :blocked
-        # no flags, no payload
       else
         # Unknown frame type is explicitly allowed
       end

@@ -15,7 +15,8 @@ module HTTP2
     settings_enable_push:             1,                     # enabled for servers
     settings_max_concurrent_streams:  Framer::MAX_STREAM_ID, # unlimited
     settings_initial_window_size:     65535,
-    settings_compress_data:           0,                     # disabled
+    settings_max_frame_size:          16384,
+    settings_max_header_list_size:    2**31 - 1,             # unlimited
   }.freeze
 
   DEFAULT_CONNECTIONS_SETTINGS = {
@@ -23,7 +24,8 @@ module HTTP2
     settings_enable_push:             1,     # enabled for servers
     settings_max_concurrent_streams:  100,
     settings_initial_window_size:     65535, #
-    settings_compress_data:           0,     # disabled
+    settings_max_frame_size:          16384,
+    settings_max_header_list_size:    2**31 - 1,             # unlimited
   }.freeze
 
   # Default stream priority (lower values are higher priority).
@@ -53,8 +55,18 @@ module HTTP2
     # infinity, but is automatically updated on receipt of peer settings).
     attr_reader :window
 
+    # Max frame size
+    attr_reader :max_frame_size
+    def max_frame_size=(size)
+      @framer.max_frame_size = @max_frame_size = size
+    end
+
     # Current value of connection SETTINGS
     def settings_value; @settings; end
+
+    # Pending settings value
+    #  Sent but not ack'ed settings
+    attr_reader :pending_settings
 
     # Number of active streams between client and server (reserved streams
     # are not counted towards the stream limit).
@@ -62,14 +74,22 @@ module HTTP2
 
     # Initializes new connection object.
     #
-    def initialize(settings = {})
+    def initialize(**settings)
       @settings = DEFAULT_CONNECTIONS_SETTINGS.merge(settings)
+
+      @compressor   = Header::Compressor.new(settings)
+      @decompressor = Header::Decompressor.new(settings)
+
       @active_stream_count = 0
       @streams = {}
+      @pending_settings = []
 
       @framer = Framer.new
+
       @window_limit = @settings[:settings_initial_window_size]
       @window = @window_limit
+
+      self.max_frame_size = @settings[:settings_max_frame_size]
 
       @recv_buffer = Buffer.new
       @send_buffer = []
@@ -124,6 +144,7 @@ module HTTP2
     # @param settings [Array or Hash]
     def settings(payload)
       payload = payload.to_a
+      @pending_settings << payload
       send({type: :settings, stream: 0, payload: payload})
     end
 
@@ -289,6 +310,7 @@ module HTTP2
     # @note all frames are currently delivered in FIFO order.
     # @param frame [Hash]
     def send(frame)
+      emit(:frame_sent, frame)
       if frame[:type] == :data
         send_data(frame, true)
 
@@ -387,9 +409,15 @@ module HTTP2
         connection_error
       end
 
-      return if frame[:flags].include?(:ack)
+      settings, ack_received = \
+        if frame[:flags].include?(:ack)
+          # Process pending settings we have sent.
+          [@pending_settings.shift, true]
+        else
+          [frame[:payload], false]
+        end
 
-      frame[:payload].each do |key,v|
+      settings.each do |key,v|
         @settings[key] = v
         case key
         when :settings_max_concurrent_streams
@@ -421,6 +449,9 @@ module HTTP2
             v == 0 || v == 1 or connection_error
           end
 
+        when :settings_max_frame_size
+          self.max_frame_size = v
+
         when :settings_compress_data
           # This is server.  Peer (client) can set either 0 or 1.
           v == 0 || v == 1 or connection_error
@@ -430,8 +461,12 @@ module HTTP2
         end
       end
 
-      # send ack
-      send({type: :settings, stream: 0, payload: [], flags: [:ack]})
+      if ack_received
+        emit(:settings_ack, frame, @pending_settings.size)
+      elsif @state != :closed
+        # send ack
+        send({type: :settings, stream: 0, payload: [], flags: [:ack]})
+      end
     end
 
     # Decode headers payload and update connection decompressor state.
@@ -469,7 +504,7 @@ module HTTP2
         cont = frame.dup
         cont[:type] = :continuation
         cont[:flags] = []
-        cont[:payload] = payload.slice!(0, Framer::MAX_PAYLOAD_SIZE)
+        cont[:payload] = payload.slice!(0, max_frame_size)
         frames << cont
       end
       if frames.empty?
@@ -545,7 +580,7 @@ module HTTP2
         connection_error(msg: 'Stream ID already exists')
       end
 
-      stream = Stream.new({id: id, window: @window_limit}.merge(args))
+      stream = Stream.new({connection: self, id: id, window: @window_limit}.merge(args))
 
       # Streams that are in the "open" state, or either of the "half closed"
       # states count toward the maximum number of streams that an endpoint is

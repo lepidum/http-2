@@ -1,8 +1,5 @@
 module HTTP2
 
-  # Maximum size of a DATA payload (16383 bytes, ~16K).
-  MAX_FRAME_SIZE = 2**14-1
-
   # Implementation of stream and connection DATA flow control: frames may
   # be split and / or may be buffered based on current flow control window.
   #
