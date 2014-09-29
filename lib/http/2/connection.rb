@@ -10,7 +10,7 @@ module HTTP2
   DEFAULT_MAX_CONCURRENT_STREAMS = 100
 
   # Default values for SETTINGS frame, as defined by the spec.
-  SPEC_DEFAULT_CONNECTIONS_SETTINGS = {
+  SPEC_DEFAULT_CONNECTION_SETTINGS = {
     settings_header_table_size:       4096,
     settings_enable_push:             1,                     # enabled for servers
     settings_max_concurrent_streams:  Framer::MAX_STREAM_ID, # unlimited
@@ -19,7 +19,7 @@ module HTTP2
     settings_max_header_list_size:    2**31 - 1,             # unlimited
   }.freeze
 
-  DEFAULT_CONNECTIONS_SETTINGS = {
+  DEFAULT_CONNECTION_SETTINGS = {
     settings_header_table_size:       4096,
     settings_enable_push:             1,     # enabled for servers
     settings_max_concurrent_streams:  100,
@@ -32,7 +32,7 @@ module HTTP2
   DEFAULT_WEIGHT    = 16
 
   # Default connection "fast-fail" preamble string as defined by the spec.
-  CONNECTION_HEADER   = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+  CONNECTION_PREFACE_MAGIC = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 
   # Connection encapsulates all of the connection, stream, flow-control,
   # error management, and other processing logic required for a well-behaved
@@ -53,16 +53,13 @@ module HTTP2
 
     # Size of current connection flow control window (by default, set to
     # infinity, but is automatically updated on receipt of peer settings).
-    attr_reader :window
+    attr_reader :local_window
+    attr_reader :remote_window
+    alias :window :local_window
 
-    # Max frame size
-    attr_reader :max_frame_size
-    def max_frame_size=(size)
-      @framer.max_frame_size = @max_frame_size = size
-    end
-
-    # Current value of connection SETTINGS
-    def settings_value; @settings; end
+    # Current settings value for local and peer
+    attr_reader :local_settings
+    attr_reader :remote_settings
 
     # Pending settings value
     #  Sent but not ack'ed settings
@@ -75,7 +72,8 @@ module HTTP2
     # Initializes new connection object.
     #
     def initialize(**settings)
-      @settings = DEFAULT_CONNECTIONS_SETTINGS.merge(settings)
+      @local_settings  = DEFAULT_CONNECTION_SETTINGS.merge(settings)
+      @remote_settings = SPEC_DEFAULT_CONNECTION_SETTINGS.dup
 
       @compressor   = Header::Compressor.new(settings)
       @decompressor = Header::Decompressor.new(settings)
@@ -86,10 +84,10 @@ module HTTP2
 
       @framer = Framer.new
 
-      @window_limit = @settings[:settings_initial_window_size]
-      @window = @window_limit
-
-      self.max_frame_size = @settings[:settings_max_frame_size]
+      @local_window_limit = @local_settings[:settings_initial_window_size]
+      @local_window = @local_window_limit
+      @remote_window_limit = @remote_settings[:settings_initial_window_size]
+      @remote_window = @remote_window_limit
 
       @recv_buffer = Buffer.new
       @send_buffer = []
@@ -104,7 +102,7 @@ module HTTP2
     # @param parent [Stream]
     def new_stream(**args)
       raise ConnectionClosed.new if @state == :closed
-      raise StreamLimitExceeded.new if @active_stream_count == @settings[:settings_max_concurrent_streams]
+      raise StreamLimitExceeded.new if @active_stream_count == @remote_settings[:settings_max_concurrent_streams]
 
       stream = activate_stream(id: @stream_id, **args)
       @stream_id += 2
@@ -140,10 +138,13 @@ module HTTP2
     end
 
     # Sends a connection SETTINGS frame to the peer.
+    # The values are reflected when the corresponding ACK is received.
     #
     # @param settings [Array or Hash]
     def settings(payload)
       payload = payload.to_a
+      check = validate_settings(@local_role, payload)
+      check and connection_error
       @pending_settings << payload
       send({type: :settings, stream: 0, payload: payload})
     end
@@ -163,19 +164,20 @@ module HTTP2
       #
       # Client connection header is 24 byte connection header followed by
       # SETTINGS frame. Server connection header is SETTINGS frame only.
-      if @state == :new
+      if @state == :waiting_magic
         if @recv_buffer.size < 24
-          if !CONNECTION_HEADER.start_with? @recv_buffer
+          if !CONNECTION_PREFACE_MAGIC.start_with? @recv_buffer
             raise HandshakeError.new
           else
-            return
+            return # maybe next time
           end
 
-        elsif @recv_buffer.read(24) != CONNECTION_HEADER
+        elsif @recv_buffer.read(24) != CONNECTION_PREFACE_MAGIC
           raise HandshakeError.new
         else
-          @state = :connection_header
-          payload = @settings.select {|k,v| v != SPEC_DEFAULT_CONNECTIONS_SETTINGS[k]}
+          # MAGIC is OK.  Send our settings
+          @state = :waiting_connection_preface
+          payload = @local_settings.select {|k,v| v != SPEC_DEFAULT_CONNECTION_SETTINGS[k]}
           settings(payload)
         end
       end
@@ -296,7 +298,9 @@ module HTTP2
         end
       end
 
-    rescue
+    rescue => e
+      p e
+      p e.backtrace
       connection_error
     end
     alias :<< :receive
@@ -364,7 +368,7 @@ module HTTP2
     # @param frame [Hash]
     def connection_management(frame)
       case @state
-      when :connection_header
+      when :waiting_connection_preface
         # SETTINGS frames MUST be sent at the start of a connection.
         @state = :connected
         connection_settings(frame)
@@ -374,7 +378,7 @@ module HTTP2
         when :settings
           connection_settings(frame)
         when :window_update
-          @window += frame[:increment]
+          @remote_window += frame[:increment]
           send_data(nil, true)
         when :ping
           if frame[:flags].include? :ack
@@ -401,7 +405,51 @@ module HTTP2
       end
     end
 
-    # Update local connection settings based on parameters set by the peer.
+    # Validate settings parameters.  See sepc Section 6.5.2.
+    #
+    # @param role [Symbol] The sender's role: :client or :server
+    # @return nil if no error.  Exception object in case of any error.
+    def validate_settings(role, settings)
+      settings.each do |key,v|
+        case key
+        when :settings_header_table_size
+          # Any value is valid
+        when :settings_enable_push
+          if role == :server
+            # Section 8.2
+            # Clients MUST reject any attempt to change the
+            # SETTINGS_ENABLE_PUSH setting to a value other than 0 by treating the
+            # message as a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+            v == 0 or return ProtocolError.new("invalid #{key} value")
+          else
+            # Any value other than 0 or 1 MUST be treated as a
+            # connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+            v == 0 || v == 1 or return ProtocolError.new("invalid #{key} value")
+          end
+        when :settings_max_concurrent_streams
+          # Any value is valid
+        when :settings_initial_window_size
+          # Values above the maximum flow control window size of 2^31-1 MUST
+          # be treated as a connection error (Section 5.4.1) of type
+          # FLOW_CONTROL_ERROR.
+          v > 0x7fffffff and return FlowControlError.new("invalid #{key} value")
+        when :settings_max_frame_size
+          # The initial value is 2^14 (16,384) octets.  The value advertised
+          # by an endpoint MUST be between this initial value and the maximum
+          # allowed frame size (2^24-1 or 16,777,215 octets), inclusive.
+          # Values outside this range MUST be treated as a connection error
+          # (Section 5.4.1) of type PROTOCOL_ERROR.
+          16384 <= v && v <= 16777215 or return ProtocolError.new("invalid #{key} value")
+        when :settings_max_header_list_size
+          # Any value is valid
+        else
+          # ignore unknown settings
+        end
+      end
+      nil
+    end
+
+    # Update connection settings based on parameters set by the peer.
     #
     # @param frame [Hash]
     def connection_settings(frame)
@@ -409,16 +457,23 @@ module HTTP2
         connection_error
       end
 
-      settings, ack_received = \
+      settings, side = \
         if frame[:flags].include?(:ack)
           # Process pending settings we have sent.
-          [@pending_settings.shift, true]
+          [@pending_settings.shift, :local]
         else
-          [frame[:payload], false]
+          check = validate_settings(@remote_role, frame[:payload])
+          check and connection_error(check)
+          [frame[:payload], :remote]
         end
 
       settings.each do |key,v|
-        @settings[key] = v
+        if side == :local
+          @local_settings[key] = v
+        else
+          @remote_settings[key] = v
+        end
+
         case key
         when :settings_max_concurrent_streams
 
@@ -428,40 +483,39 @@ module HTTP2
         # controlled frames until it receives WINDOW_UPDATE frames that cause
         # the flow control window to become positive.
         when :settings_initial_window_size
-          v > 0x7fffffff and connection_error
-          @window = @window - @window_limit + v
-          @streams.each do |id, stream|
-            stream.emit(:window, stream.window - @window_limit + v)
-          end
+          if side == :local
+            @local_window = @local_window - @local_window_limit + v
+            @streams.each do |id, stream|
+              stream.emit(:local_window, stream.local_window - @local_window_limit + v)
+            end
 
-          @window_limit = v
+            @local_window_limit = v
+          else
+            @remote_window = @remote_window - @remote_window_limit + v
+            @streams.each do |id, stream|
+              stream.emit(:window, stream.remote_window - @remote_window_limit + v)
+            end
+
+            @remote_window_limit = v
+          end
 
         # Setting header table size might cause some headers evicted
         when :settings_header_table_size
-          @compressor.set_table_size(v)
-
-        when :settings_enable_push
-          if @stream_id % 2 == 1
-            # This is client.  Peer (server) is not allowed to change settings_enable_push.
-            v == 0 or connection_error
+          if side == :local
+            @decompressor.set_table_size(v)
           else
-            # This is server.  Peer (client) can set either 0 or 1.
-            v == 0 || v == 1 or connection_error
+            @compressor.set_table_size(v)
           end
 
+        when :settings_enable_push
         when :settings_max_frame_size
-          self.max_frame_size = v
-
-        when :settings_compress_data
-          # This is server.  Peer (client) can set either 0 or 1.
-          v == 0 || v == 1 or connection_error
-
         else
           # ignore unknown settings
         end
       end
 
-      if ack_received
+      if side == :local
+        # received settings_ack
         emit(:settings_ack, frame, @pending_settings.size)
       elsif @state != :closed
         # send ack
@@ -504,7 +558,7 @@ module HTTP2
         cont = frame.dup
         cont[:type] = :continuation
         cont[:flags] = []
-        cont[:payload] = payload.slice!(0, max_frame_size)
+        cont[:payload] = payload.slice!(0, @remote_settings[:settings_max_frame_size])
         frames << cont
       end
       if frames.empty?
@@ -580,7 +634,7 @@ module HTTP2
         connection_error(msg: 'Stream ID already exists')
       end
 
-      stream = Stream.new({connection: self, id: id, window: @window_limit}.merge(args))
+      stream = Stream.new({connection: self, id: id}.merge(args))
 
       # Streams that are in the "open" state, or either of the "half closed"
       # states count toward the maximum number of streams that an endpoint is
