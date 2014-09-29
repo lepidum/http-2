@@ -298,9 +298,9 @@ module HTTP2
         end
       end
 
-    rescue => e
-      p e
-      p e.backtrace
+    rescue
+      # This rescue clause doesn't catch Exception, intentionally.
+      # HandshakeError or already handled connection_error should not be caught.
       connection_error
     end
     alias :<< :receive
