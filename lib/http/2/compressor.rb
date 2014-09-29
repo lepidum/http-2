@@ -104,9 +104,8 @@ module HTTP2
           index:      :all,
           table_size: 4096,
         }
-        options = default_options.merge(options)
         @table = []
-        @options = options
+        @options = default_options.merge(options)
         @limit = @options[:table_size]
       end
 
@@ -150,7 +149,7 @@ module HTTP2
 
         case cmd[:type]
         when :changetablesize
-          set_table_size(cmd[:name])
+          set_table_size(cmd[:value])
 
         when :indexed
           # Indexed Representation
@@ -185,7 +184,7 @@ module HTTP2
           emit = [cmd[:name], cmd[:value]]
 
           if cmd[:type] == :incremental
-            idx = add_to_table(emit)
+            add_to_table(emit)
           end
 
         else
@@ -208,7 +207,9 @@ module HTTP2
         noindex = [:static, :never].include?(@options[:index])
         headers.each do |h|
           cmd = addcmd(h)
-          noindex && cmd[:type] == :incremental and cmd[:type] = :noindex
+          if noindex && cmd[:type] == :incremental
+            cmd[:type] = :noindex
+          end
           commands << cmd
           process(cmd)
         end
@@ -235,15 +236,17 @@ module HTTP2
           STATIC_TABLE.each_index do |i|
             if STATIC_TABLE[i] == header
               exact ||= i
+              break
             elsif STATIC_TABLE[i].first == header.first
               name_only ||= i
             end
           end
         end
-        if [:all].include?(@options[:index])
+        if [:all].include?(@options[:index]) && !exact
           @table.each_index do |i|
             if @table[i] == header
               exact ||= i + STATIC_TABLE.size
+              break
             elsif @table[i].first == header.first
               name_only ||= i + STATIC_TABLE.size
             end
@@ -279,13 +282,9 @@ module HTTP2
       # the new entry fits in the header table.
       #
       # @param cmd [Array] +[name, value]+
-      # @return [Integer] index of the newly added entry or nil if not added
       def add_to_table(cmd)
         if size_check(cmd)
           @table.unshift(cmd)
-          0
-        else
-          nil
         end
       end
 
@@ -421,7 +420,7 @@ module HTTP2
         when :indexed
           buffer << integer(h[:name]+1, rep[:prefix])
         when :changetablesize
-          buffer << integer(h[:size], rep[:prefix])
+          buffer << integer(h[:value], rep[:prefix])
         else
           if h[:name].is_a? Integer
             buffer << integer(h[:name]+1, rep[:prefix])
@@ -530,7 +529,7 @@ module HTTP2
           header[:name] == 0 and raise CompressionError.new
           header[:name] -= 1
         when :changetablesize
-          header[:size] = header[:name]
+          header[:value] = header[:name]
         else
           if header[:name] == 0
             header[:name] = string(buf)
