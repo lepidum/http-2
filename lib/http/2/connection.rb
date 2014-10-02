@@ -533,8 +533,7 @@ module HTTP2
     # @param frame [Hash]
     def decode_headers(frame)
       if frame[:payload].is_a? String
-        headers = @decompressor.decode(frame[:payload])
-        frame[:payload] = postprocess_headers(headers)
+        frame[:payload] = @decompressor.decode(frame[:payload])
       end
 
     rescue Exception => e
@@ -548,7 +547,6 @@ module HTTP2
     def encode_headers(frame)
       payload = frame[:payload]
       unless payload.is_a? String
-        payload = preprocess_headers(payload)
         payload = @compressor.encode(payload)
       end
 
@@ -573,53 +571,6 @@ module HTTP2
 
     rescue Exception => e
       [connection_error(:compression_error, msg: e.message)]
-    end
-
-    # Preprocess headers so that multiple values with the same name should be concatenated
-    # @param headers [Array of Key-Value]
-    # @return [Array of Key-Value]
-    def preprocess_headers(headers)
-      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.3
-      #
-      # To preserve the order of multiple occurrences of a header field with
-      # the same name, its ordered values are concatenated into a single
-      # value using a zero-valued octet (0x0) to delimit them.
-      headers.group_by {|n,v| n}.map do |name, tuples|
-        tuples.size == 1 ? tuples.first: [name, tuples.map {|k,v| v}.join("\0")]
-      end
-
-      # TODO:
-      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.4
-      #
-      # To allow for better compression efficiency, the Cookie header field
-      # MAY be split into separate header fields, each with one or more
-      # cookie-pairs.  If there are multiple Cookie header fields after
-      # decompression, these MUST be concatenated into a single octet string
-      # using the two octet delimiter of 0x3B, 0x20 (the ASCII string "; ").
-    end
-
-    # Postprocess headers to undo the preprocessing
-    # @param headers [Array of Key-Value]
-    # @return [Array of Key-Value]
-    def postprocess_headers(headers)
-      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.3
-      #
-      # After decompression, header fields that have values containing zero
-      # octets (0x0) MUST be split into multiple header fields before being
-      # processed.
-      #
-      # http://tools.ietf.org/html/draft-ietf-httpbis-http2-13#section-8.1.2.4
-      #
-      # The Cookie header field MAY be split using a zero octet (0x0), as
-      # defined in Section 8.1.2.3.  When decoding, zero octets MUST be
-      # replaced with the cookie delimiter ("; ").
-      headers.flat_map do |name, value|
-        if name == 'cookie'
-          [[name, value.gsub(/\0/, "; ")]]
-        else
-          value.split(/\0/).map{|v| [name, v]}
-        end
-      end
     end
 
     # Activates new incoming or outgoing stream and registers appropriate

@@ -126,15 +126,16 @@ describe HTTP2::Connection do
   end
 
   context "Headers pre/post processing" do
-    it "should concatenate multiple occurences of a header field with the same name" do
+    it "should not concatenate multiple occurences of a header field with the same name" do
       input = [
         ["Content-Type", "text/html"],
         ["Cache-Control", "max-age=60, private"],
         ["Cache-Control", "must-revalidate"],
       ]
       expected = [
-        ["cache-control", "max-age=60, private\0must-revalidate"],
         ["content-type", "text/html"],
+        ["cache-control", "max-age=60, private"],
+        ["cache-control", "must-revalidate"],
       ]
       headers = []
       @conn.on(:frame) do |bytes|
@@ -151,15 +152,16 @@ describe HTTP2::Connection do
       emitted.should match_array(expected)
     end
 
-    it "should split zero-concatenated header field values" do
+    it "should not split zero-concatenated header field values" do
       input = [
         ["cache-control", "max-age=60, private\0must-revalidate"],
         ["content-type", "text/html"],
         ["cookie", "a=b\0c=d; e=f"],
       ]
       expected = [
-        ["cache-control", ["max-age=60, private", "must-revalidate"]],
-        ["cookie", ["a=b; c=d; e=f"]],
+        ["cache-control", "max-age=60, private\0must-revalidate"],
+        ["content-type", "text/html"],
+        ["cookie", "a=b\0c=d; e=f"],
       ]
 
       result = nil
@@ -172,12 +174,8 @@ describe HTTP2::Connection do
       stream = srv.new_stream
       stream.headers(input)
 
-      puts result.inspect
+      result.should eq expected
 
-      result.size.should eq 4 # 2 cache-control, 1 cookie, 1 content-type
-      expected.each do |name, values|
-        result.select {|n, v| n == name}.map {|n, v| v}.should eq values
-      end
     end
   end
 
