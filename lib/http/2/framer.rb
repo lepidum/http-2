@@ -152,7 +152,7 @@ module HTTP2
     def readCommonHeader(buf)
       frame = {}
       len_h, len_l, type, flags, stream = buf.slice(0,9).unpack(HEADERPACK)
-      frame[:length] = len_h * 256 + len_l
+      frame[:length] = (len_h << 16) + len_l
 
       frame[:type], _ = FRAME_TYPES.select { |t,pos| type == pos }.first
       if frame[:type]

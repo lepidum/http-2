@@ -28,13 +28,14 @@ describe HTTP2::Framer do
       f = Framer.new
       f.max_frame_size = 2**24-1
       frame = {
-        length: 2**18,
+        length: 2**18 + 2**16 + 17,
         type: :headers,
         flags: [:end_stream, :end_headers],
         stream: 15,
       }
-      bytes = [4, 0, 0x01, 0x5, 0x0000000F].pack("CnCCN")
+      bytes = [5, 17, 0x01, 0x5, 0x0000000F].pack("CnCCN")
       f.commonHeader(frame).should eq bytes
+      f.readCommonHeader(Buffer.new(bytes)).should eq frame
     end
 
     it "should raise exception on invalid frame type when sending" do
