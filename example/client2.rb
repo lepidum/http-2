@@ -1,11 +1,14 @@
 require_relative 'helper'
 
-options = {}
+$options = {}
 OptionParser.new do |opts|
   opts.banner = "Usage: client2.rb url1 url2 url3 ..."
 
   opts.on("-d", "--data [String]", "HTTP payload") do |v|
-    options[:payload] = v
+    $options[:payload] = v
+  end
+  opts.on("-p", "--protocol [#{DRAFT}]", "NPN/ALPN protocol") do |v|
+    $options[:protocol] = v
   end
 end.parse!
 
@@ -24,13 +27,15 @@ class Peer
     sock = nil
 
     if @scheme == 'https'
+      OpenSSL.debug = true
       ctx = OpenSSL::SSL::SSLContext.new
       ctx.verify_mode = OpenSSL::SSL::VERIFY_NONE
 
-      ctx.npn_protocols = [DRAFT]
+      proto = $options[:protocol] || DRAFT
+      ctx.npn_protocols = [proto]
       ctx.npn_select_cb = lambda do |protocols|
         @logger.info "NPN protocols supported by server: #{protocols}"
-        DRAFT if protocols.include? DRAFT
+        proto if protocols.include? proto
       end
 
       @sock = OpenSSL::SSL::SSLSocket.new(tcp, ctx)
@@ -38,8 +43,8 @@ class Peer
       @sock.hostname = uri.hostname
       @sock.connect
 
-      if @sock.npn_protocol != DRAFT
-        @logger.info "Failed to negotiate #{DRAFT} via NPN"
+      if @sock.npn_protocol != proto
+        @logger.info "Failed to negotiate #{proto} via NPN"
         exit
       end
     else
@@ -122,6 +127,7 @@ class Peer
 
     stream.on(:data) do |d|
       log.info "response data chunk: <<#{d}>>"
+      stream.send({type: :window_update, increment: d.size})
     end
 
     stream.on(:altsvc) do |f|
@@ -153,7 +159,7 @@ class Peer
       stream.headers(head, end_stream: true)
     else
       stream.headers(head, end_stream: false)
-      stream.data(options[:payload])
+      stream.data($options[:payload])
     end
 
     stream
