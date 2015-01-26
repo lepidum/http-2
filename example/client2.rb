@@ -2,11 +2,8 @@ require_relative 'helper'
 
 $options = {}
 OptionParser.new do |opts|
-  opts.banner = "Usage: client2.rb url1 url2 url3 ..."
+  opts.banner = "Usage: client2.rb [OPTIONS] [-- --data 'String'] url1 [--data 'String'] url2 url3 ..."
 
-  opts.on("-d", "--data [String]", "HTTP payload") do |v|
-    $options[:payload] = v
-  end
   opts.on("-p", "--protocol [#{DRAFT}]", "NPN/ALPN protocol") do |v|
     $options[:protocol] = v
   end
@@ -159,7 +156,7 @@ class Peer
       stream.headers(head, end_stream: true)
     else
       stream.headers(head, end_stream: false)
-      stream.data($options[:payload])
+      stream.data(payload)
     end
 
     stream
@@ -167,10 +164,19 @@ class Peer
 end
 
 peer = nil
+data = nil
+while ARGV.size > 0
 
-ARGV.each do |uri|
+  uri = ARGV.shift
+  while uri == '--data'
+    data ||= ''
+    data << ARGV.shift
+    uri = ARGV.shift
+  end
+
   peer ||= Peer.new(uri)
-  peer.request(uri)
+  peer.request(uri, data)
+  data = nil
 end
 
 peer.mainloop
