@@ -1,4 +1,6 @@
-require_relative 'helper'
+$LOAD_PATH << '../../lib'
+
+require_relative '../helper'
 
 options = {}
 OptionParser.new do |opts|
@@ -6,6 +8,10 @@ OptionParser.new do |opts|
 
   opts.on('-d', '--data [String]', 'HTTP payload') do |v|
     options[:payload] = v
+  end
+
+  opts.on('-r', '--rate [Integer]', 'enable throttled receive') do |v|
+    options[:rate] = v.to_i
   end
 end.parse!
 
@@ -46,11 +52,12 @@ conn.on(:frame_sent) do |frame|
   puts "Sent frame: #{frame.inspect}"
 end
 conn.on(:frame_received) do |frame|
-  puts "Received frame: #{frame.inspect}"
+  #puts "Received frame: #{frame.inspect}"
 end
 
 stream = conn.new_stream
 log = Logger.new(stream.id)
+throttle = Throttle.new(options[:rate])
 
 conn.on(:promise) do |promise|
   promise.on(:headers) do |h|
@@ -80,7 +87,8 @@ stream.on(:headers) do |h|
 end
 
 stream.on(:data) do |d|
-  log.info "response data chunk: <<#{d}>>"
+  #log.info "response data chunk: <<#{d}>>"
+  throttle.add(d.bytesize)
 end
 
 stream.on(:altsvc) do |f|
@@ -104,6 +112,13 @@ else
 end
 
 while !sock.closed? && !sock.eof?
+  increment = throttle.window_update
+  if increment > 0
+    #stream.window_update(increment)
+    stream.send(type: :window_update, increment: increment)
+    conn.send(type: :window_update, stream: 0, increment: increment)
+  end
+  IO.select([sock], [], [], 1)
   data = sock.read_nonblock(1024)
   # puts "Received bytes: #{data.unpack("H*").first}"
 
