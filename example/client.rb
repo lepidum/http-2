@@ -91,7 +91,7 @@ head = {
   ':scheme' => uri.scheme,
   ':method' => (options[:payload].nil? ? 'GET' : 'POST'),
   ':authority' => [uri.host, uri.port].join(':'),
-  ':path' => uri.path,
+  ':path' => uri.path.empty? ? '/' : uri.path,
   'accept' => '*/*',
 }
 
