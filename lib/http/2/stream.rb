@@ -206,6 +206,14 @@ module HTTP2
       send(type: :rst_stream, error: :refused_stream)
     end
 
+    # Sends a WINDOW_UPDATE frame to the peer.
+    #
+    # @param increment [Integer]
+    def window_update(increment)
+      # TODO: need to check state?
+      send(type: :window_update, increment: increment)
+    end
+
     private
 
     # HTTP 2.0 Stream States
