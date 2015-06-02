@@ -114,9 +114,8 @@ end
 while !sock.closed? && !sock.eof?
   increment = throttle.window_update
   if increment > 0
-    #stream.window_update(increment)
-    stream.send(type: :window_update, increment: increment)
-    conn.send(type: :window_update, stream: 0, increment: increment)
+    stream.window_update(increment)
+    conn.window_update(increment)
   end
   IO.select([sock], [], [], 1)
   data = sock.read_nonblock(1024)
