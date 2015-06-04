@@ -11,6 +11,10 @@ module HTTP2
       @send_buffer.map { |f| f[:length] }.reduce(:+) || 0
     end
 
+    def flow_controled_frame?(frame)
+      frame[:type] == :data
+    end
+
     private
 
     # Buffers outgoing DATA frames and applies flow control logic to split
@@ -62,6 +66,12 @@ module HTTP2
       return if frame[:ignore]
       @remote_window += frame[:increment]
       send_data
+    end
+
+    def auto_flow_control(frame)
+      return unless flow_controled_frame?(frame)
+      increment = frame[:payload].bytesize
+      window_update(increment)
     end
   end
 end

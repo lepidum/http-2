@@ -87,6 +87,11 @@ module HTTP2
 
       on(:window) { |v| @remote_window = v }
       on(:local_window) { |v| @local_window = v }
+
+      @enable_auto_flow_control = true # TODO
+      if @enable_auto_flow_control
+        on(:data, &method(:auto_flow_control))
+      end
     end
 
     # Processes incoming HTTP 2.0 frames. The frames must be decoded upstream.

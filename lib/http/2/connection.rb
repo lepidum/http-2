@@ -92,6 +92,11 @@ module HTTP2
       @send_buffer = []
       @continuation = []
       @error = nil
+
+      @enable_auto_flow_control = true # TODO
+      if @enable_auto_flow_control
+        on(:frame_received, &method(:auto_flow_control))
+      end
     end
 
     # Allocates new stream for current connection.
