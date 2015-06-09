@@ -1,11 +1,17 @@
 require_relative 'helper'
+require 'stringio'
 
 options = {}
 OptionParser.new do |opts|
   opts.banner = 'Usage: client.rb [options]'
 
   opts.on('-d', '--data [String]', 'HTTP payload') do |v|
-    options[:payload] = v
+    options[:payload] = case v
+                        when /^@/
+                          open($', 'r')
+                        else
+                          StringIO.new(v)
+                        end
   end
 end.parse!
 
@@ -37,10 +43,11 @@ else
 end
 
 conn = HTTP2::Client.new
+output_buffer = ""
+
 conn.on(:frame) do |bytes|
   # puts "Sending bytes: #{bytes.unpack("H*").first}"
-  sock.print bytes
-  sock.flush
+  output_buffer << bytes
 end
 conn.on(:frame_sent) do |frame|
   puts "Sent frame: #{frame.inspect}"
@@ -95,22 +102,64 @@ head = {
   'accept' => '*/*',
 }
 
+request_body = []
+
 puts 'Sending HTTP 2.0 request'
 if head[':method'] == 'GET'
   stream.headers(head, end_stream: true)
 else
   stream.headers(head, end_stream: false)
-  stream.data(options[:payload])
+  request_body << { stream: stream, io: options[:payload] }
 end
 
-while !sock.closed? && !sock.eof?
-  data = sock.read_nonblock(1024)
-  # puts "Received bytes: #{data.unpack("H*").first}"
+while !sock.closed?
+  poll = []
+  until request_body.empty?
+    io = request_body.first[:io]
+    s = request_body.first[:stream]
+    n = [s.window, 1024].min
 
-  begin
-    conn << data
-  rescue => e
-    puts "Exception: #{e}, #{e.message} - closing socket."
-    sock.close
+    data = io.read(n)
+    eof = io.eof?
+
+    if eof
+      io.close
+      request_body.shift
+    end
+
+    if n == 0 && !eof
+      poll << :recv
+      break
+    else
+      stream.data(data || "", end_stream: eof)
+    end
   end
+
+  until output_buffer.empty?
+    begin
+      n = sock.write_nonblock(output_buffer, exception: true)
+      output_buffer.slice!(0, n)
+    rescue IO::WaitWritable
+      poll << :send
+      break
+    end
+  end
+
+  if poll.member?(:send)
+    rs, = IO.select([sock], [sock])
+  else
+    rs, = IO.select([sock])
+  end
+
+  rs.each {
+    data = sock.read_nonblock(1024)
+    # puts "Received bytes: #{data.unpack("H*").first}"
+
+    begin
+      conn << data
+    rescue => e
+      puts "Exception: #{e}, #{e.message} - closing socket."
+      sock.close
+    end
+  }
 end
