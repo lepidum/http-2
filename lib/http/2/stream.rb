@@ -88,10 +88,11 @@ module HTTP2
       on(:window) { |v| @remote_window = v }
       on(:local_window) { |v| @local_window = v }
 
-      @enable_auto_flow_control = true # TODO
-      if @enable_auto_flow_control
-        on(:data, &method(:auto_flow_control))
-      end
+      @flow_controller = FlowController.new
+      on(:data) {|payload|
+        @flow_controller.receive(payload.bytesize)
+        flow_control
+      }
     end
 
     # Processes incoming HTTP 2.0 frames. The frames must be decoded upstream.
@@ -217,6 +218,12 @@ module HTTP2
     def window_update(increment)
       # TODO: need to check state?
       send(type: :window_update, increment: increment)
+    end
+
+    def flow_control
+      if increment = @flow_controller.create_window_update
+        window_update(increment)
+      end
     end
 
     private

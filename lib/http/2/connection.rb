@@ -93,10 +93,13 @@ module HTTP2
       @continuation = []
       @error = nil
 
-      @enable_auto_flow_control = true # TODO
-      if @enable_auto_flow_control
-        on(:frame_received, &method(:auto_flow_control))
-      end
+      @flow_controller = settings[:flow_controller] || FlowController.new
+      on(:frame_received) {|frame|
+        if flow_controled_frame?(frame)
+          @flow_controller.receive(frame[:payload].bytesize)
+          flow_control
+        end
+      }
     end
 
     # Allocates new stream for current connection.
@@ -319,6 +322,14 @@ module HTTP2
       connection_error
     end
     alias_method :<<, :receive
+
+    def flow_control
+      if @state == :connected
+        if increment = @flow_controller.create_window_update
+          window_update(increment)
+        end
+      end
+    end
 
     private
 
