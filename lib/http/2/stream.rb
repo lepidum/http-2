@@ -71,7 +71,7 @@ module HTTP2
     # @param exclusive [Boolean]
     # @param window [Integer]
     # @param parent [Stream]
-    def initialize(connection:, id:, weight: 16, dependency: 0, exclusive: false, parent: nil)
+    def initialize(connection:, id:, weight: 16, dependency: 0, exclusive: false, parent: nil, flow_controller: nil)
       @connection = connection
       @id = id
       @weight = weight
@@ -88,7 +88,7 @@ module HTTP2
       on(:window) { |v| @remote_window = v }
       on(:local_window) { |v| @local_window = v }
 
-      @flow_controller = FlowController.new
+      @flow_controller = flow_controller || FlowController.new
       on(:data) {|payload|
         @flow_controller.receive(payload.bytesize)
         flow_control

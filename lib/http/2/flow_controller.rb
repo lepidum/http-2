@@ -8,16 +8,16 @@ module HTTP2
     MAX_WINDOW = 0x7fffffff
 
     attr_reader :max_window
-    attr_reader :update_threshold
+    attr_reader :threshold
 
-    def initialize(initial_window: 65_535, update_threshold: 2_048, max_window: nil)
+    def initialize(initial_window: 65_535, threshold: 2_048, max_window: nil)
       @max_window = [max_window || initial_window, MAX_WINDOW].min
       @current_window = initial_window
-      @update_threshold = update_threshold
+      @threshold = threshold
     end
 
     def window_update
-      return nil if current_window > update_threshold
+      return nil if current_window >= threshold
       return nil if max_window <= current_window
       max_window - current_window
     end

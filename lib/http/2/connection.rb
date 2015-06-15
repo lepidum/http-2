@@ -70,7 +70,7 @@ module HTTP2
 
     # Initializes new connection object.
     #
-    def initialize(**settings)
+    def initialize(flow_controller: nil, **settings)
       @local_settings  = DEFAULT_CONNECTION_SETTINGS.merge(settings)
       @remote_settings = SPEC_DEFAULT_CONNECTION_SETTINGS.dup
 
@@ -93,7 +93,7 @@ module HTTP2
       @continuation = []
       @error = nil
 
-      @flow_controller = settings[:flow_controller] || FlowController.new
+      @flow_controller = flow_controller || FlowController.new
       on(:frame_received) {|frame|
         if flow_controled_frame?(frame)
           @flow_controller.receive(frame[:payload].bytesize)

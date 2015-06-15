@@ -13,6 +13,14 @@ OptionParser.new do |opts|
                           StringIO.new(v)
                         end
   end
+
+  opts.on('-R', '--connection-rate [Integer]', 'limit receive rate of connection') do |v|
+    options[:connection_rate] = v.to_i
+  end
+
+  opts.on('-r', '--stream-rate [Integer]', 'limit receive rate of stream') do |v|
+    options[:stream_rate] = v.to_i
+  end
 end.parse!
 
 uri = URI.parse(ARGV[0] || 'http://localhost:8080/')
@@ -42,11 +50,11 @@ else
   sock = tcp
 end
 
-conn = HTTP2::Client.new
+conn = HTTP2::Client.new(flow_controller: Throttle.new(rate: options[:connection_rate]))
 output_buffer = ""
 
 conn.on(:frame) do |bytes|
-  # puts "Sending bytes: #{bytes.unpack("H*").first}"
+  puts "Sending bytes: #{bytes.unpack("H*").first[0, 32]}..."
   output_buffer << bytes
 end
 conn.on(:frame_sent) do |frame|
@@ -56,7 +64,7 @@ conn.on(:frame_received) do |frame|
   puts "Received frame: #{frame.inspect}"
 end
 
-stream = conn.new_stream
+stream = conn.new_stream(flow_controller: Throttle.new(rate: options[:stream_rate]))
 log = Logger.new(stream.id)
 
 conn.on(:promise) do |promise|
@@ -87,7 +95,7 @@ stream.on(:headers) do |h|
 end
 
 stream.on(:data) do |d|
-  log.info "response data chunk: <<#{d}>>"
+  #log.info "response data chunk: <<#{d}>>"
 end
 
 stream.on(:altsvc) do |f|
@@ -135,6 +143,9 @@ while !sock.closed?
     end
   end
 
+  conn.flow_control
+  stream.flow_control
+
   until output_buffer.empty?
     begin
       n = sock.write_nonblock(output_buffer, exception: true)
@@ -146,12 +157,12 @@ while !sock.closed?
   end
 
   if poll.member?(:send)
-    rs, = IO.select([sock], [sock])
+    rs, = IO.select([sock], [sock], nil, 1)
   else
-    rs, = IO.select([sock])
+    rs, = IO.select([sock], nil, nil, 1)
   end
 
-  rs.each {
+  if rs
     data = sock.read_nonblock(1024)
     # puts "Received bytes: #{data.unpack("H*").first}"
 
@@ -161,5 +172,5 @@ while !sock.closed?
       puts "Exception: #{e}, #{e.message} - closing socket."
       sock.close
     end
-  }
+  end
 end
