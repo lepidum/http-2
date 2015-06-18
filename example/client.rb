@@ -50,7 +50,11 @@ else
   sock = tcp
 end
 
-conn = HTTP2::Client.new(flow_controller: Throttle.new(rate: options[:connection_rate]))
+conn = HTTP2::Client.new(flow_controller: Throttle.new(rate: options[:connection_rate]),
+                         stream_flow_controller_cb: proc {
+                           Throttle.new(rate: options[:stream_rate])
+                         }
+                         )
 output_buffer = ""
 
 conn.on(:frame) do |bytes|
@@ -64,7 +68,7 @@ conn.on(:frame_received) do |frame|
   puts "Received frame: #{frame.inspect}"
 end
 
-stream = conn.new_stream(flow_controller: Throttle.new(rate: options[:stream_rate]))
+stream = conn.new_stream
 log = Logger.new(stream.id)
 
 conn.on(:promise) do |promise|

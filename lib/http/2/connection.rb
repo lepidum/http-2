@@ -70,7 +70,7 @@ module HTTP2
 
     # Initializes new connection object.
     #
-    def initialize(flow_controller: nil, **settings)
+    def initialize(flow_controller: nil, stream_flow_controller_cb: nil, **settings)
       @local_settings  = DEFAULT_CONNECTION_SETTINGS.merge(settings)
       @remote_settings = SPEC_DEFAULT_CONNECTION_SETTINGS.dup
 
@@ -99,6 +99,9 @@ module HTTP2
           @flow_controller.receive(frame[:payload].bytesize)
           flow_control
         end
+      }
+      @stream_flow_controller_cb = stream_flow_controller_cb || proc {
+        FlowController.new
       }
     end
 
@@ -623,7 +626,8 @@ module HTTP2
     def activate_stream(id: nil, **args)
       connection_error(msg: 'Stream ID already exists') if @streams.key?(id)
 
-      stream = Stream.new({ connection: self, id: id }.merge(args))
+      fc = @stream_flow_controller_cb.call
+      stream = Stream.new({ connection: self, id: id, flow_controller: fc }.merge(args))
 
       # Streams that are in the "open" state, or either of the "half closed"
       # states count toward the maximum number of streams that an endpoint is
