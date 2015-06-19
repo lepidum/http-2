@@ -334,6 +334,13 @@ module HTTP2
       end
     end
 
+    def flow_control_all
+      flow_control
+      @streams.each {|id, s|
+        s.flow_control
+      }
+    end
+
     private
 
     # Send an outgoing frame. DATA frames are subject to connection flow

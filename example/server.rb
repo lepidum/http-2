@@ -11,6 +11,14 @@ OptionParser.new do |opts|
   opts.on('-p', '--port [Integer]', 'listen port') do |v|
     options[:port] = v
   end
+
+  opts.on('-R', '--connection-rate [Integer]', 'limit receive rate of connection') do |v|
+    options[:connection_rate] = v.to_i
+  end
+
+  opts.on('-r', '--stream-rate [Integer]', 'limit receive rate of stream') do |v|
+    options[:stream_rate] = v.to_i
+  end
 end.parse!
 
 puts "Starting server on port #{options[:port]}"
@@ -29,10 +37,16 @@ loop do
   sock = server.accept
   puts 'New TCP connection!'
 
-  conn = HTTP2::Server.new
+  conn = HTTP2::Server.new(flow_controller: Throttle.new(rate: options[:connection_rate]),
+                           stream_flow_controller_cb: proc {
+                             Throttle.new(rate: options[:stream_rate])
+                           }
+                           )
+  output_buffer = ""
+
   conn.on(:frame) do |bytes|
     # puts "Writing bytes: #{bytes.unpack("H*").first}"
-    sock.write bytes
+    output_buffer << bytes
   end
   conn.on(:frame_sent) do |frame|
     puts "Sent frame: #{frame.inspect}"
@@ -40,6 +54,8 @@ loop do
   conn.on(:frame_received) do |frame|
     puts "Received frame: #{frame.inspect}"
   end
+
+  response_body = []
 
   conn.on(:stream) do |stream|
     log = Logger.new(stream.id)
@@ -76,21 +92,61 @@ loop do
         'content-type' => 'text/plain',
       }, end_stream: false)
 
-      # split response into multiple DATA frames
-      stream.data(response.slice!(0, 5), end_stream: false)
-      stream.data(response)
+      response_body << { stream: stream, io: StringIO.new(response) }
     end
   end
 
-  while !sock.closed? && !(sock.eof? rescue true) # rubocop:disable Style/RescueModifier
-    data = sock.readpartial(1024)
-    # puts "Received bytes: #{data.unpack("H*").first}"
+  while !sock.closed?
+    poll = []
+    until response_body.empty?
+      io = response_body.first[:io]
+      s = response_body.first[:stream]
+      n = [s.window, 1024].min
 
-    begin
-      conn << data
-    rescue => e
-      puts "Exception: #{e}, #{e.message} - closing socket."
-      sock.close
+      data = io.read(n)
+      eof = io.eof?
+
+      if eof
+        io.close
+        response_body.shift
+      end
+
+      if n == 0 && !eof
+        poll << :recv
+        break
+      else
+        s.data(data || "", end_stream: eof)
+      end
+    end
+
+    conn.flow_control_all
+
+    until output_buffer.empty?
+      begin
+        n = sock.write_nonblock(output_buffer, exception: true)
+        output_buffer.slice!(0, n)
+      rescue IO::WaitWritable
+        poll << :send
+        break
+      end
+    end
+
+    if poll.member?(:send)
+      rs, = IO.select([sock], [sock], nil, 1)
+    else
+      rs, = IO.select([sock], nil, nil, 1)
+    end
+
+    if rs
+      begin
+        data = sock.read_nonblock(1024)
+        # puts "Received bytes: #{data.unpack("H*").first}"
+        conn << data
+      rescue IO::WaitReadable
+      rescue => e
+        puts "Exception: #{e}, #{e.message} - closing socket."
+        sock.close
+      end
     end
   end
 end
